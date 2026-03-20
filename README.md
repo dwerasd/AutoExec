@@ -51,10 +51,13 @@ pip install -r requirements.txt
 AutoExec/
 ├── AutoExec.pyw          # 메인 애플리케이션
 ├── AutoExec.db           # SQLite3 데이터베이스 (pcs, tasks, closed_days)
-├── AutoExec.json         # 로컬 UI 설정 (윈도우 위치/크기)
-├── .env                  # 텔레그램 봇 설정
+├── AutoExec.json         # 로컬 UI 설정 (윈도우 위치/크기, Git 미추적)
+├── .env                  # 텔레그램 봇 + GitHub 토큰 설정 (Git 미추적)
 ├── requirements.txt      # Python 의존 패키지
-├── migrate_to_sqlite.py  # MariaDB → SQLite 마이그레이션 스크립트 (1회용)
+├── gitclone.py           # GitHub 저장소 클론 + 구독 등록
+├── gitsync.py            # 구독 저장소 자동 동기화
+├── data/                 # 구독 저장소 데이터 (Git 미추적)
+│   └── repos.json        # 구독 목록
 └── README.md
 ```
 
@@ -68,6 +71,12 @@ WOL 부팅 실패 시 텔레그램으로 알림을 받을 수 있습니다.
 ```env
 TELEGRAM_TOKEN=your_bot_token
 TELEGRAM_CHAT_ID=your_chat_id
+
+GITHUB_USER=your_github_username
+GITHUB_TOKEN=your_github_token
+
+# gitclone.py 기본 클론 경로 (예: E:\GitHub\clones)
+CLONE_BASE_PATH=
 ```
 
 #### 텔레그램 봇 토큰 발급 방법
@@ -104,16 +113,26 @@ pythonw AutoExec.pyw
 | 로그 | 실행 기록 및 상태 메시지 |
 | PC 관리 | PC 목록 (편집/부팅/핑/추가/삭제/순서변경) |
 
-## 마이그레이션 (MariaDB → SQLite)
+## GitHub 저장소 클론 & 동기화
 
-기존 MariaDB 환경에서 전환하는 경우:
-
+### 저장소 클론 (gitclone.py)
 ```bash
-python migrate_to_sqlite.py
+python gitclone.py owner/repo                    # 클론 + 구독 등록
+python gitclone.py https://github.com/owner/repo # URL도 가능
+python gitclone.py owner/repo --path "E:\dev"    # 경로 지정
+python gitclone.py owner/repo --reset            # 삭제 후 재클론
 ```
 
-이 스크립트는 MariaDB의 `pcs`, `tasks` 테이블과 `closed_days.db` 파일의 데이터를
-`AutoExec.db` 하나로 통합합니다.
+GUI에서 GitHub URL을 붙여넣으면 자동으로 `gitclone.py`를 호출합니다.
+
+### 구독 저장소 동기화 (gitsync.py)
+```bash
+python gitsync.py                          # 모든 구독 저장소 업데이트
+python gitsync.py --list                   # 구독 목록 확인
+python gitsync.py --remove owner/repo      # 구독 해제
+```
+
+AutoExec 자동실행에 `gitsync.py`를 등록하면 구독 저장소를 주기적으로 업데이트할 수 있습니다.
 
 ## License
 

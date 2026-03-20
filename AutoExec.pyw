@@ -1123,9 +1123,10 @@ class AutoExecApp:
 
         def _worker():
             try:
+                gitclone_path = os.path.join(SCRIPT_DIR, "gitclone.py")
                 result = subprocess.run(
-                    ["python", r"E:\Sources\git-auto\gitclone.py", url],
-                    cwd="D:\\",
+                    ["python", gitclone_path, url],
+                    cwd=SCRIPT_DIR,
                     capture_output=True,
                     text=True,
                     encoding="utf-8",
