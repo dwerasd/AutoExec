@@ -137,3 +137,7 @@ AutoExec 자동실행에 `gitsync.py`를 등록하면 구독 저장소를 주기
 ## License
 
 MIT
+
+---
+
+이 프로젝트의 소스 코드는 Claude Opus 4.6을 사용하여 작성되었습니다.
