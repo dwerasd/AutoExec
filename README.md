@@ -60,14 +60,29 @@ AutoExec/
 
 ## 설정
 
-### 텔레그램 알림 (`.env`)
+### 텔레그램 알림 (선택 사항)
+
+WOL 부팅 실패 시 텔레그램으로 알림을 받을 수 있습니다.
+사용하려면 프로젝트 루트에 `.env` 파일을 생성하고 아래 내용을 작성합니다.
 
 ```env
 TELEGRAM_TOKEN=your_bot_token
 TELEGRAM_CHAT_ID=your_chat_id
 ```
 
-WOL 부팅 실패 시 텔레그램으로 알림을 받을 수 있습니다.
+#### 텔레그램 봇 토큰 발급 방법
+
+1. 텔레그램에서 [@BotFather](https://t.me/BotFather)를 검색하여 대화를 시작합니다.
+2. `/newbot` 명령을 입력하고 봇 이름과 사용자명을 설정합니다.
+3. 발급된 토큰을 `TELEGRAM_TOKEN`에 입력합니다.
+
+#### Chat ID 확인 방법
+
+1. 생성한 봇에게 아무 메시지를 보냅니다.
+2. 브라우저에서 `https://api.telegram.org/bot<토큰>/getUpdates`에 접속합니다.
+3. 응답 JSON의 `result[0].message.chat.id` 값을 `TELEGRAM_CHAT_ID`에 입력합니다.
+
+> `.env` 파일이 없거나 값이 비어 있으면 텔레그램 알림 없이 정상 동작합니다.
 
 ## 실행
 
