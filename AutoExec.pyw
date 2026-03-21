@@ -286,7 +286,7 @@ def db_delete_move_target(target_id):
 # ═══════════════════════════════════════════════════════════
 def load_local_settings():
     """로컬 UI 설정 로드"""
-    defaults = {"window": {"x": 200, "y": 200, "width": 620, "height": 750, "topmost": False}, "auto_move_window": True}
+    defaults = {"window": {"x": 200, "y": 200, "width": 620, "height": 750, "topmost": False}}
     if os.path.exists(JSON_PATH):
         try:
             with open(JSON_PATH, "r", encoding="utf-8") as f:
@@ -1017,7 +1017,7 @@ class AutoExecApp:
         root = self.root
         root.columnconfigure(0, weight=1)
 
-        # ── row 0: 체크박스 (최상위 + 듀얼 모니터) ──
+        # ── row 0: 최상위 체크박스 ──
         chk_frame = ttk.Frame(root)
         chk_frame.grid(row=0, column=0, sticky=tk.EW, padx=8, pady=(6, 0))
 
@@ -1025,10 +1025,6 @@ class AutoExecApp:
         ttk.Checkbutton(chk_frame, text="최상위", variable=self.var_topmost,
                         command=self._toggle_topmost).pack(side=tk.LEFT)
         self._apply_topmost()
-
-        self.var_auto_move = tk.BooleanVar(value=self.settings.get("auto_move_window", True))
-        ttk.Checkbutton(chk_frame, text="듀얼→브라우저이동", variable=self.var_auto_move,
-                        command=self._toggle_auto_move).pack(side=tk.LEFT, padx=(8, 0))
 
         # ── row 1: GitHub 다운로드 ──
         git_frame = ttk.Frame(root)
@@ -1194,10 +1190,6 @@ class AutoExecApp:
 
     def _apply_topmost(self):
         self.root.attributes("-topmost", self.var_topmost.get())
-
-    def _toggle_auto_move(self):
-        self.settings["auto_move_window"] = self.var_auto_move.get()
-        save_local_settings(self.settings)
 
     # ─── 로그 ────────────────────────────────────────────
     def _clear_log(self):
@@ -1917,7 +1909,7 @@ class AutoExecApp:
         prev = self._last_monitor_count
         self._last_monitor_count = count
 
-        if prev <= 1 and count >= 2 and self.var_auto_move.get():
+        if prev <= 1 and count >= 2:
             self.log("[모니터] 듀얼 모니터 감지 → 브라우저를 서브 모니터로 이동")
             threading.Thread(target=self._move_browsers_to_sub_monitor, daemon=True).start()
 
