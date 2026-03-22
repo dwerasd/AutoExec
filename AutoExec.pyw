@@ -337,6 +337,39 @@ def load_closed_days():
 
 
 # ═══════════════════════════════════════════════════════════
+#  탐색기 창 검색
+# ═══════════════════════════════════════════════════════════
+def _find_explorer_window_by_title(folder_name):
+    """CabinetWClass(탐색기) 창 중 제목이 folder_name으로 시작하는 핸들 반환.
+    Windows 탐색기 창 제목은 '폴더명 - 파일 탐색기' 형식."""
+    result = [None]
+    GetClassNameW = ctypes.windll.user32.GetClassNameW
+
+    def enum_callback(hwnd, lParam):
+        if not ctypes.windll.user32.IsWindowVisible(hwnd):
+            return True
+        cls_buf = ctypes.create_unicode_buffer(64)
+        GetClassNameW(hwnd, cls_buf, 64)
+        if cls_buf.value != "CabinetWClass":
+            return True
+        length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+        if length == 0:
+            return True
+        buf = ctypes.create_unicode_buffer(length + 1)
+        ctypes.windll.user32.GetWindowTextW(hwnd, buf, length + 1)
+        title = buf.value
+        # "폴더명" 또는 "폴더명 - 파일 탐색기" 형식 모두 매칭
+        if title == folder_name or title.startswith(folder_name + " -"):
+            result[0] = hwnd
+            return False
+        return True
+
+    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+    ctypes.windll.user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
+    return result[0]
+
+
+# ═══════════════════════════════════════════════════════════
 #  텔레그램
 # ═══════════════════════════════════════════════════════════
 def send_telegram(message):
@@ -557,7 +590,7 @@ class TaskEditDialog(tk.Toplevel):
 
         # 실행 모드
         ttk.Label(frame, text="실행 모드:").grid(row=2, column=0, sticky=tk.W, pady=3)
-        self.var_repeat_mode = tk.StringVar(value="매일 1회")
+        self.var_repeat_mode = tk.StringVar(value="부팅시 1회")
         self.cmb_mode = ttk.Combobox(frame, textvariable=self.var_repeat_mode,
                                      values=list(self._REPEAT_MODES.keys()),
                                      state="readonly", width=12)
@@ -803,33 +836,7 @@ class TaskEditDialog(tk.Toplevel):
         folder_name = os.path.basename(exe_path.rstrip("\\/"))
         target_hwnd = None
 
-        def enum_callback(hwnd, lParam):
-            nonlocal target_hwnd
-            if not ctypes.windll.user32.IsWindowVisible(hwnd):
-                return True
-            length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
-            if length == 0:
-                return True
-            buf = ctypes.create_unicode_buffer(length + 1)
-            ctypes.windll.user32.GetWindowTextW(hwnd, buf, length + 1)
-            if buf.value == folder_name:
-                pid = ctypes.wintypes.DWORD()
-                ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-                handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid.value)
-                if handle:
-                    try:
-                        pbuf = ctypes.create_unicode_buffer(260)
-                        size = ctypes.wintypes.DWORD(260)
-                        if ctypes.windll.kernel32.QueryFullProcessImageNameW(handle, 0, pbuf, ctypes.byref(size)):
-                            if os.path.basename(pbuf.value).lower() == "explorer.exe":
-                                target_hwnd = hwnd
-                                return False
-                    finally:
-                        ctypes.windll.kernel32.CloseHandle(handle)
-            return True
-
-        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
-        ctypes.windll.user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
+        target_hwnd = _find_explorer_window_by_title(folder_name)
 
         if not target_hwnd:
             messagebox.showinfo("알림", f"'{folder_name}' 탐색기 창을 찾을 수 없습니다.\n폴더를 먼저 열어주세요.", parent=self)
@@ -1551,17 +1558,18 @@ class AutoExecApp:
     def _open_folder_task(self, task):
         """폴더 태스크를 열고 위치 지정이 있으면 이동"""
         executable = task["executable"]
+        folder_path = os.path.normpath(executable)  # 포워드 슬래시 → 백슬래시 변환
         tx = task.get("target_x", 0) or 0
         ty = task.get("target_y", 0) or 0
         tw = task.get("target_w", 0) or 0
         th = task.get("target_h", 0) or 0
         has_pos = tx or ty or tw or th
 
-        subprocess.Popen(["explorer.exe", executable])
-        self.log(f"[폴더] {task['name']} 열기: {executable}")
+        subprocess.Popen(["explorer.exe", folder_path])
+        self.log(f"[폴더] {task['name']} 열기: {folder_path}")
 
         if has_pos:
-            folder_name = os.path.basename(executable.rstrip("\\/"))
+            folder_name = os.path.basename(folder_path)
             def _move():
                 time.sleep(1.5)
                 self._move_explorer_window(folder_name, tx, ty, tw, th)
@@ -1724,36 +1732,7 @@ class AutoExecApp:
 
     def _move_explorer_window(self, folder_name, tx, ty, tw, th):
         """폴더명으로 탐색기 창을 찾아 지정 위치로 이동"""
-        target_hwnd = None
-
-        def enum_callback(hwnd, lParam):
-            nonlocal target_hwnd
-            if not ctypes.windll.user32.IsWindowVisible(hwnd):
-                return True
-            length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
-            if length == 0:
-                return True
-            buf = ctypes.create_unicode_buffer(length + 1)
-            ctypes.windll.user32.GetWindowTextW(hwnd, buf, length + 1)
-            if buf.value == folder_name:
-                # explorer.exe 프로세스인지 확인
-                pid = ctypes.wintypes.DWORD()
-                ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-                handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid.value)
-                if handle:
-                    try:
-                        pbuf = ctypes.create_unicode_buffer(260)
-                        size = ctypes.wintypes.DWORD(260)
-                        if ctypes.windll.kernel32.QueryFullProcessImageNameW(handle, 0, pbuf, ctypes.byref(size)):
-                            if os.path.basename(pbuf.value).lower() == "explorer.exe":
-                                target_hwnd = hwnd
-                                return False
-                    finally:
-                        ctypes.windll.kernel32.CloseHandle(handle)
-            return True
-
-        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
-        ctypes.windll.user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
+        target_hwnd = _find_explorer_window_by_title(folder_name)
 
         if target_hwnd:
             ctypes.windll.user32.ShowWindow(target_hwnd, 9)  # SW_RESTORE
@@ -1969,20 +1948,26 @@ class AutoExecApp:
                 t.start()
 
     def _run_boot_tasks(self):
-        """부팅시 1회 실행 태스크 처리 (앱 시작 시 호출)"""
+        """부팅시 1회 실행 태스크 처리 (앱 시작 시 1회만 호출)"""
         today_str = datetime.now().strftime("%Y-%m-%d")
+        boot_count = 0
         for task in self.task_data:
             if not task["enabled"]:
                 continue
             if task.get("repeat_mode") != "boot":
                 continue
             # 오늘 이미 실행했으면 건너뜀
-            if str(task.get("last_run", ""))[:10] == today_str:
+            last_run = str(task.get("last_run", "") or "")
+            if last_run[:10] == today_str:
                 continue
             if task["skip_holiday"] and self._is_closed_day(datetime.now()):
                 continue
             task["last_run"] = today_str
+            db_update_task_last_run(task["id"], today_str)
             self._execute_task(task, today_str)
+            boot_count += 1
+        if boot_count:
+            self.log(f"[부팅] {boot_count}개 태스크 실행")
 
     def _check_auto_tasks(self, current_hm, today_str, is_closed):
         """자동실행 체크 (매일 1회 + 반복 모드 지원)"""
