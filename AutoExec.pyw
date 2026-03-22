@@ -1980,6 +1980,9 @@ class AutoExecApp:
 
             repeat_mode = task.get("repeat_mode", "once")
 
+            if repeat_mode == "boot":
+                continue  # boot 모드는 앱 시작 시 _run_boot_tasks에서 처리
+
             if repeat_mode in ("once", "weekly", "monthly"):
                 # 하루 1회 실행 계열: once(매일), weekly(지정 요일), monthly(지정일)
                 if str(task["last_run"]) == today_str:
