@@ -1,0 +1,359 @@
+{
+    "commands": [
+        {
+            "command": "reg.exe add \"HKCU\\Software\\Classes\\CLSID\\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\\InprocServer32\" /f /ve",
+            "type": "cmd",
+            "description": "Windows 11 우클릭 기존 메뉴로 복원",
+            "enabled": true
+        },
+        {
+            "command": "Get-AppxPackage Microsoft.XboxGamingOverlay | Remove-AppxPackage",
+            "type": "powershell",
+            "description": "Xbox Game Bar 제거",
+            "enabled": true
+        },
+        {
+            "command": "Get-AppxPackage -allusers Microsoft.549981C3F5F10 | Remove-AppxPackage",
+            "type": "powershell",
+            "description": "Cortana (SearchApp.exe) 제거",
+            "enabled": true
+        },
+        {
+            "command": "Get-AppxPackage Microsoft.YourPhone -AllUsers | Remove-AppxPackage",
+            "type": "powershell",
+            "description": "Your Phone 앱 제거",
+            "enabled": true
+        },
+        {
+            "command": "Get-ProvisionedAppxPackage -Online | Where-Object { $_.PackageName -match \"xbox\" } | ForEach-Object { Remove-ProvisionedAppxPackage -Online -PackageName $_.PackageName }",
+            "type": "powershell",
+            "description": "Xbox 관련 프로비저닝 패키지 모두 제거",
+            "enabled": true
+        },
+        {
+            "command": "sc stop \"DiagTrack\"",
+            "type": "cmd",
+            "description": "Connected User Experiences and Telemetry 서비스 중지",
+            "enabled": true
+        },
+        {
+            "command": "sc config \"DiagTrack\" start=disabled",
+            "type": "cmd",
+            "description": "Connected User Experiences and Telemetry 서비스 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "sc stop \"SysMain\"",
+            "type": "cmd",
+            "description": "SysMain (Superfetch) 서비스 중지",
+            "enabled": true
+        },
+        {
+            "command": "sc config \"SysMain\" start=disabled",
+            "type": "cmd",
+            "description": "SysMain (Superfetch) 서비스 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "sc stop \"WSearch\"",
+            "type": "cmd",
+            "description": "Windows Search 서비스 중지",
+            "enabled": true
+        },
+        {
+            "command": "sc config \"WSearch\" start=disabled",
+            "type": "cmd",
+            "description": "Windows Search 서비스 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "sc stop \"BITS\"",
+            "type": "cmd",
+            "description": "Background Intelligent Transfer Service 중지",
+            "enabled": true
+        },
+        {
+            "command": "sc config \"BITS\" start=disabled",
+            "type": "cmd",
+            "description": "Background Intelligent Transfer Service 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "sc stop \"wuauserv\"",
+            "type": "cmd",
+            "description": "Windows Update 서비스 중지",
+            "enabled": true
+        },
+        {
+            "command": "sc config \"wuauserv\" start=disabled",
+            "type": "cmd",
+            "description": "Windows Update 서비스 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "sc stop \"UsoSvc\"",
+            "type": "cmd",
+            "description": "Update Orchestrator 서비스 중지",
+            "enabled": true
+        },
+        {
+            "command": "sc config \"UsoSvc\" start=disabled",
+            "type": "cmd",
+            "description": "Update Orchestrator 서비스 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "sc stop \"WaaSMedicSvc\"",
+            "type": "cmd",
+            "description": "Windows Update Medic 서비스 중지",
+            "enabled": true
+        },
+        {
+            "command": "sc config \"WaaSMedicSvc\" start=disabled",
+            "type": "cmd",
+            "description": "Windows Update Medic 서비스 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\Application Experience\\Microsoft Compatibility Appraiser\" /disable",
+            "type": "cmd",
+            "description": "Microsoft 호환성 진단 예약 작업 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\Application Experience\\ProgramDataUpdater\" /disable",
+            "type": "cmd",
+            "description": "프로그램 데이터 업데이터 예약 작업 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\Application Experience\\StartupAppTask\" /disable",
+            "type": "cmd",
+            "description": "시작 앱 작업 예약 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\Customer Experience Improvement Program\\Consolidator\" /disable",
+            "type": "cmd",
+            "description": "CEIP Consolidator 예약 작업 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\Customer Experience Improvement Program\\KernelCeipTask\" /disable",
+            "type": "cmd",
+            "description": "CEIP 커널 작업 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\Customer Experience Improvement Program\\UsbCeip\" /disable",
+            "type": "cmd",
+            "description": "CEIP USB 작업 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\DiskDiagnostic\\Microsoft-Windows-DiskDiagnosticDataCollector\" /disable",
+            "type": "cmd",
+            "description": "디스크 진단 데이터 수집기 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\DiskFootprint\\Diagnostics\" /disable",
+            "type": "cmd",
+            "description": "디스크 풋프린트 진단 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\DiskFootprint\\StorageSense\" /disable",
+            "type": "cmd",
+            "description": "저장소 센스 예약 작업 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\Feedback\\Siuf\\DmClient\" /disable",
+            "type": "cmd",
+            "description": "피드백 DmClient 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\Feedback\\Siuf\\DmClientOnScenarioDownload\" /disable",
+            "type": "cmd",
+            "description": "피드백 시나리오 다운로드 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\FileHistory\\File History (maintenance mode)\" /disable",
+            "type": "cmd",
+            "description": "파일 히스토리 유지 관리 모드 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\Location\\Notifications\" /disable",
+            "type": "cmd",
+            "description": "위치 알림 예약 작업 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\Location\\WindowsActionDialog\" /disable",
+            "type": "cmd",
+            "description": "위치 Windows 작업 대화 상자 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\Maps\\MapsToastTask\" /disable",
+            "type": "cmd",
+            "description": "지도 토스트 알림 작업 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\Maps\\MapsUpdateTask\" /disable",
+            "type": "cmd",
+            "description": "지도 업데이트 작업 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\Mobile Broadband Accounts\\MNO Metadata Parser\" /disable",
+            "type": "cmd",
+            "description": "모바일 광대역 메타데이터 파서 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\NetTrace\\GatherNetworkInfo\" /disable",
+            "type": "cmd",
+            "description": "네트워크 정보 수집 예약 작업 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\PI\\Sqm-Tasks\" /disable",
+            "type": "cmd",
+            "description": "SQM 작업 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\Power Efficiency Diagnostics\\AnalyzeSystem\" /disable",
+            "type": "cmd",
+            "description": "전력 효율 진단 시스템 분석 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\RemoteAssistance\\RemoteAssistanceTask\" /disable",
+            "type": "cmd",
+            "description": "원격 지원 예약 작업 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\RetailDemo\\CleanupOfflineContent\" /disable",
+            "type": "cmd",
+            "description": "리테일 데모 오프라인 콘텐츠 정리 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\Shell\\FamilySafetyMonitor\" /disable",
+            "type": "cmd",
+            "description": "가족 보호 모니터 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\Shell\\FamilySafetyRefreshTask\" /disable",
+            "type": "cmd",
+            "description": "가족 보호 새로 고침 작업 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\Windows Error Reporting\\QueueReporting\" /disable",
+            "type": "cmd",
+            "description": "Windows 오류 보고 큐 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\Windows Media Sharing\\UpdateLibrary\" /disable",
+            "type": "cmd",
+            "description": "Windows 미디어 공유 라이브러리 업데이트 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\Work Folders\\Work Folders Logon Synchronization\" /disable",
+            "type": "cmd",
+            "description": "작업 폴더 로그온 동기화 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "schtasks /change /tn \"Microsoft\\Windows\\Work Folders\\Work Folders Maintenance Work\" /disable",
+            "type": "cmd",
+            "description": "작업 폴더 유지 관리 비활성화",
+            "enabled": true
+        },
+        {
+            "command": "reg.exe delete \"HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace\\DelegateFolders\\{3dfdf296-dbec-4fb4-81d1-6a3438bcf4de}\" /f",
+            "type": "cmd",
+            "description": "내 PC에서 3D 개체 폴더 제거",
+            "enabled": true
+        },
+        {
+            "command": "reg.exe delete \"HKLM\\SOFTWARE\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Explorer\\MyComputer\\NameSpace\\DelegateFolders\\{3dfdf296-dbec-4fb4-81d1-6a3438bcf4de}\" /f",
+            "type": "cmd",
+            "description": "내 PC에서 3D 개체 폴더 제거 (64비트)",
+            "enabled": true
+        },
+        {
+            "command": "netsh advfirewall firewall set rule name=\"파일 및 프린터 공유(에코 요청 - ICMPv4-In)\" new enable=yes",
+            "type": "cmd",
+            "description": "방화벽 ICMP 인바운드 허용 (ping 응답)",
+            "enabled": true
+        },
+        {
+            "command": "netsh advfirewall firewall set rule name=\"파일 및 프린터 공유(에코 요청 - ICMPv4-Out)\" new enable=yes",
+            "type": "cmd",
+            "description": "방화벽 ICMP 아웃바운드 허용",
+            "enabled": true
+        },
+        {
+            "command": "taskkill /f /im OneDrive.exe",
+            "type": "cmd",
+            "description": "OneDrive 프로세스 종료",
+            "enabled": true
+        },
+        {
+            "command": "if exist \"%SYSTEMROOT%\\SysWOW64\\OneDriveSetup.exe\" (\"%SYSTEMROOT%\\SysWOW64\\OneDriveSetup.exe\" /uninstall) else (\"%SYSTEMROOT%\\System32\\OneDriveSetup.exe\" /uninstall)",
+            "type": "cmd",
+            "description": "OneDrive 제거 (64비트/32비트 자동 감지)",
+            "enabled": true
+        },
+        {
+            "command": "rd \"%USERPROFILE%\\OneDrive\" /Q /S",
+            "type": "cmd",
+            "description": "OneDrive 사용자 폴더 삭제",
+            "enabled": true
+        },
+        {
+            "command": "rd \"%LOCALAPPDATA%\\Microsoft\\OneDrive\" /Q /S",
+            "type": "cmd",
+            "description": "OneDrive 로컬 데이터 삭제",
+            "enabled": true
+        },
+        {
+            "command": "rd \"%PROGRAMDATA%\\Microsoft OneDrive\" /Q /S",
+            "type": "cmd",
+            "description": "OneDrive 프로그램 데이터 삭제",
+            "enabled": true
+        },
+        {
+            "command": "reg.exe delete \"HKEY_CLASSES_ROOT\\CLSID\\{018D5C66-4533-4307-9B53-224DE2ED1FE6}\" /f",
+            "type": "cmd",
+            "description": "OneDrive 탐색기 사이드 패널 제거 (32비트)",
+            "enabled": true
+        },
+        {
+            "command": "reg.exe delete \"HKEY_CLASSES_ROOT\\Wow6432Node\\CLSID\\{018D5C66-4533-4307-9B53-224DE2ED1FE6}\" /f",
+            "type": "cmd",
+            "description": "OneDrive 탐색기 사이드 패널 제거 (64비트)",
+            "enabled": true
+        },
+        {
+            "command": "gpupdate /force",
+            "type": "cmd",
+            "description": "그룹 정책 강제 업데이트 (QoS 등 정책 적용)",
+            "enabled": true
+        }
+    ],
+    "description": "윈도우 재설치 후 실행할 시스템 명령어 목록입니다."
+}

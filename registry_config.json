@@ -1,0 +1,306 @@
+{
+    "registry_items": [
+        {
+            "path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\DataCollection",
+            "name": "AllowTelemetry",
+            "type": "REG_DWORD",
+            "value": 0,
+            "description": "Windows 원격 분석(Telemetry) 비활성화"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\System\\GameConfigStore",
+            "name": "GameDVR_Enabled",
+            "type": "REG_DWORD",
+            "value": 0,
+            "description": "Xbox Game DVR 비활성화"
+        },
+        {
+            "path": "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\CrashControl",
+            "name": "EnableLogFile",
+            "type": "REG_DWORD",
+            "value": 0,
+            "description": "크래시 로그 파일 생성 막기"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\Control Panel\\Desktop",
+            "name": "MenuShowDelay",
+            "type": "REG_SZ",
+            "value": "0",
+            "description": "메뉴 열리는 딜레이 끄기"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\Control Panel\\Desktop\\WindowMetrics",
+            "name": "MinAnimate",
+            "type": "REG_SZ",
+            "value": "0",
+            "description": "최소화/최대화 애니메이션 끄기"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\Control Panel\\Mouse",
+            "name": "SmoothMouseXCurve",
+            "type": "REG_BINARY",
+            "value": "00,00,00,00,00,00,00,00,00,a0,00,00,00,00,00,00,00,40,01,00,00,00,00,00,00,80,02,00,00,00,00,00,00,00,05,00,00,00,00,00",
+            "description": "마우스 가속 끄기 (X 커브)"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\Control Panel\\Mouse",
+            "name": "SmoothMouseYCurve",
+            "type": "REG_BINARY",
+            "value": "00,00,00,00,00,00,00,00,66,a6,02,00,00,00,00,00,cd,4c,05,00,00,00,00,00,a0,99,0a,00,00,00,00,00,38,33,15,00,00,00,00,00",
+            "description": "마우스 가속 끄기 (Y 커브)"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
+            "name": "MaxConnectionsPer1_0Server",
+            "type": "REG_DWORD",
+            "value": 255,
+            "description": "HKCU HTTP 1.0 서버당 최대 연결 수 증가"
+        },
+        {
+            "path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
+            "name": "MaxConnectionsPer1_0Server",
+            "type": "REG_DWORD",
+            "value": 128,
+            "description": "HKLM HTTP 1.0 서버당 최대 연결 수 증가"
+        },
+        {
+            "path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
+            "name": "MaxConnectionsPerServer",
+            "type": "REG_DWORD",
+            "value": 128,
+            "description": "HKLM 서버당 최대 연결 수 증가"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Search",
+            "name": "BingSearchEnabled",
+            "type": "REG_DWORD",
+            "value": 0,
+            "description": "시작메뉴 Bing 검색 비활성화"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Search",
+            "name": "CortanaConsent",
+            "type": "REG_DWORD",
+            "value": 0,
+            "description": "Cortana 동의 비활성화"
+        },
+        {
+            "path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows Defender",
+            "name": "DisableAntiSpyware",
+            "type": "REG_DWORD",
+            "value": 1,
+            "description": "Windows Defender 비활성화"
+        },
+        {
+            "path": "HKEY_LOCAL_MACHINE\\SYSTEM\\ControlSet001\\Services\\Ndu",
+            "name": "Start",
+            "type": "REG_DWORD",
+            "value": 4,
+            "description": "Ndu 서비스 중지 (네트워크 메모리 누수 방지)"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\GameDVR",
+            "name": "AppCaptureEnabled",
+            "type": "REG_DWORD",
+            "value": 0,
+            "description": "게임바 캡처 비활성화"
+        },
+        {
+            "path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\PasswordLess\\Device",
+            "name": "DevicePasswordLessBuildVersion",
+            "type": "REG_DWORD",
+            "value": 0,
+            "description": "netplwiz 자동 로그인 체크박스 숨김 해제"
+        },
+        {
+            "path": "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Power\\PowerSettings\\54533251-82be-4824-96c1-47b60b740d00\\5d76a2ca-e8c0-402f-a133-2158492d58ad",
+            "name": "Attributes",
+            "type": "REG_DWORD",
+            "value": 0,
+            "description": "프로세서 성능 향상 모드 옵션 표시 (전원 옵션)"
+        },
+        {
+            "path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows NT\\Terminal Services",
+            "name": "fEnableWddmDriver",
+            "type": "REG_DWORD",
+            "value": 0,
+            "description": "원격 데스크톱 WDDM 그래픽 드라이버 비활성화"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer",
+            "name": "EnableAutoTray",
+            "type": "REG_DWORD",
+            "value": 0,
+            "description": "시스템 트레이 모든 아이콘 항상 표시"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\Control Panel\\Accessibility\\Keyboard Preference",
+            "name": "On",
+            "type": "REG_SZ",
+            "value": "1",
+            "description": "액세스 키에 밑줄 표시"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+            "name": "EnableXamlStartMenu",
+            "type": "REG_DWORD",
+            "value": 0,
+            "description": "XAML 시작 메뉴 비활성화 (윈도우 키 먹통 해결)"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+            "name": "MultiTaskingAltTabFilter",
+            "type": "REG_DWORD",
+            "value": 0,
+            "description": "Alt+Tab에서 앱 탭 표시 안함 (열려 있는 창만 표시) - 좆 같은 엣지 알트탭 여러개 끄기"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\Software\\Policies\\Microsoft\\Windows\\QoS\\NLiveConnector",
+            "name": "Version",
+            "type": "REG_SZ",
+            "value": "1.0",
+            "description": "NLiveConnector QoS 정책 버전 (네이버 라이브 대역폭 독점 방지)"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\Software\\Policies\\Microsoft\\Windows\\QoS\\NLiveConnector",
+            "name": "Application Name",
+            "type": "REG_SZ",
+            "value": "NLiveConnector.exe",
+            "description": "NLiveConnector QoS 대상 애플리케이션 (네이버 라이브 대역폭 독점 방지)"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\Software\\Policies\\Microsoft\\Windows\\QoS\\NLiveConnector",
+            "name": "Protocol",
+            "type": "REG_SZ",
+            "value": "*",
+            "description": "NLiveConnector QoS 프로토콜 (모든 프로토콜) (네이버 라이브 대역폭 독점 방지)"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\Software\\Policies\\Microsoft\\Windows\\QoS\\NLiveConnector",
+            "name": "Throttle Rate",
+            "type": "REG_SZ",
+            "value": "5000000",
+            "description": "NLiveConnector 대역폭 제한 (5Mbps) (네이버 라이브 대역폭 독점 방지)"
+        },
+        {
+            "path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU",
+            "name": "NoAutoUpdate",
+            "type": "REG_DWORD",
+            "value": 1,
+            "description": "Windows Update 자동 업데이트 비활성화"
+        },
+        {
+            "path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\AU",
+            "name": "AUOptions",
+            "type": "REG_DWORD",
+            "value": 2,
+            "description": "Windows Update 옵션: 다운로드/설치 전 알림 (수동)"
+        },
+        {
+            "path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate",
+            "name": "SetDisableUXWUAccess",
+            "type": "REG_DWORD",
+            "value": 0,
+            "description": "설정에서 Windows Update 접근 허용 (수동 확인 가능)"
+        },
+        {
+            "path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\Auto Update",
+            "name": "AUOptions",
+            "type": "REG_DWORD",
+            "value": 2,
+            "description": "Windows Update: 업데이트 확인만 (다운로드/설치 안함)"
+        },
+        {
+            "path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\CloudContent",
+            "name": "DisableWindowsConsumerFeatures",
+            "type": "REG_DWORD",
+            "value": 1,
+            "description": "Microsoft 소비자 기능 비활성화 (스토어 앱 자동 설치 차단)"
+        },
+        {
+            "path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\CloudContent",
+            "name": "DisableThirdPartySuggestions",
+            "type": "REG_DWORD",
+            "value": 1,
+            "description": "타사 앱 추천 비활성화"
+        },
+        {
+            "path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\CloudContent",
+            "name": "DisableSoftLanding",
+            "type": "REG_DWORD",
+            "value": 1,
+            "description": "Windows 팁/추천 비활성화"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+            "name": "SilentInstalledAppsEnabled",
+            "type": "REG_DWORD",
+            "value": 0,
+            "description": "앱 자동 설치 비활성화"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+            "name": "ContentDeliveryAllowed",
+            "type": "REG_DWORD",
+            "value": 0,
+            "description": "콘텐츠 전달 비활성화 (추천 앱 차단)"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+            "name": "OemPreInstalledAppsEnabled",
+            "type": "REG_DWORD",
+            "value": 0,
+            "description": "OEM 사전 설치 앱 비활성화"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+            "name": "PreInstalledAppsEnabled",
+            "type": "REG_DWORD",
+            "value": 0,
+            "description": "사전 설치 앱 비활성화"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+            "name": "PreInstalledAppsEverEnabled",
+            "type": "REG_DWORD",
+            "value": 0,
+            "description": "사전 설치 앱 완전 비활성화"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+            "name": "SubscribedContent-338388Enabled",
+            "type": "REG_DWORD",
+            "value": 0,
+            "description": "시작 메뉴 추천 앱 비활성화"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+            "name": "SubscribedContent-338389Enabled",
+            "type": "REG_DWORD",
+            "value": 0,
+            "description": "Windows 팁/제안 비활성화"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+            "name": "SubscribedContent-353694Enabled",
+            "type": "REG_DWORD",
+            "value": 0,
+            "description": "설정 앱 추천 콘텐츠 비활성화"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+            "name": "SubscribedContent-353696Enabled",
+            "type": "REG_DWORD",
+            "value": 0,
+            "description": "시작 메뉴 제안 비활성화"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager",
+            "name": "SystemPaneSuggestionsEnabled",
+            "type": "REG_DWORD",
+            "value": 0,
+            "description": "시스템 패널 제안 비활성화"
+        }
+    ],
+    "description": "백업할 레지스트리 항목 목록입니다."
+}

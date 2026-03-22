@@ -18,9 +18,11 @@ import ctypes
 import ctypes.wintypes
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 from dotenv import load_dotenv
+import win11_setup
+import win11_folder
 
 # ─── 경로 설정 ────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -96,6 +98,11 @@ def db_init():
             sort_order INTEGER NOT NULL DEFAULT 0
         )
     """)
+    # move_targets 테이블에 maximize 필드 추가
+    try:
+        cur.execute("ALTER TABLE move_targets ADD COLUMN maximize INTEGER NOT NULL DEFAULT 1")
+    except Exception:
+        pass
     # tasks 테이블에 위치 필드 추가 (폴더 창 위치 지정용)
     for col, default in [("target_x", 0), ("target_y", 0), ("target_w", 0), ("target_h", 0)]:
         try:
@@ -261,21 +268,21 @@ def db_fetch_move_targets():
 
 
 def db_upsert_move_target(target_id, name, exe_name, enabled=1, move_mode="sub_monitor",
-                          target_x=0, target_y=0, target_w=0, target_h=0):
+                          target_x=0, target_y=0, target_w=0, target_h=0, maximize=1):
     conn = get_db_connection()
     try:
         cur = conn.cursor()
         if target_id:
             cur.execute(
                 "UPDATE move_targets SET name=?, exe_name=?, enabled=?, move_mode=?, "
-                "target_x=?, target_y=?, target_w=?, target_h=? WHERE id=?",
-                (name, exe_name, int(enabled), move_mode, target_x, target_y, target_w, target_h, target_id),
+                "target_x=?, target_y=?, target_w=?, target_h=?, maximize=? WHERE id=?",
+                (name, exe_name, int(enabled), move_mode, target_x, target_y, target_w, target_h, int(maximize), target_id),
             )
         else:
             cur.execute(
-                "INSERT INTO move_targets (name, exe_name, enabled, move_mode, target_x, target_y, target_w, target_h, sort_order) "
-                "VALUES (?,?,?,?,?,?,?,?, (SELECT IFNULL(MAX(sort_order),0)+1 FROM move_targets))",
-                (name, exe_name, int(enabled), move_mode, target_x, target_y, target_w, target_h),
+                "INSERT INTO move_targets (name, exe_name, enabled, move_mode, target_x, target_y, target_w, target_h, maximize, sort_order) "
+                "VALUES (?,?,?,?,?,?,?,?,?, (SELECT IFNULL(MAX(sort_order),0)+1 FROM move_targets))",
+                (name, exe_name, int(enabled), move_mode, target_x, target_y, target_w, target_h, int(maximize)),
             )
         conn.commit()
     finally:
@@ -956,8 +963,12 @@ class MoveTargetEditDialog(tk.Toplevel):
 
         self.var_enabled = tk.BooleanVar(value=True)
         ttk.Checkbutton(frame, text="자동 이동 사용", variable=self.var_enabled).grid(
-            row=3, column=0, columnspan=4, sticky=tk.W, pady=3
+            row=3, column=0, columnspan=2, sticky=tk.W, pady=3
         )
+
+        self.var_maximize = tk.BooleanVar(value=True)
+        self.chk_maximize = ttk.Checkbutton(frame, text="최대화", variable=self.var_maximize)
+        self.chk_maximize.grid(row=3, column=2, columnspan=2, sticky=tk.W, pady=3)
 
         ttk.Label(frame, text="이동 위치:").grid(row=4, column=0, sticky=tk.W, pady=3)
         self.var_mode = tk.StringVar(value="서브 모니터")
@@ -999,6 +1010,7 @@ class MoveTargetEditDialog(tk.Toplevel):
             self.ent_name.insert(0, target["name"])
             self.ent_exe.insert(0, target["exe_name"])
             self.var_enabled.set(bool(target.get("enabled", 1)))
+            self.var_maximize.set(bool(target.get("maximize", 1)))
             mode = target.get("move_mode", "sub_monitor")
             self.var_mode.set(self._MODE_KEYS.get(mode, "서브 모니터"))
             if mode == "custom":
@@ -1040,6 +1052,9 @@ class MoveTargetEditDialog(tk.Toplevel):
         elif mode == "save_position":
             self.save_pos_frame.grid()
             self._update_saved_pos_label()
+        # 모드 변경 시 최대화 기본값 (사용자가 직접 변경한 경우가 아닐 때만)
+        if event is not None:
+            self.var_maximize.set(mode == "sub_monitor")
 
     def _update_saved_pos_label(self):
         """저장된 위치 표시"""
@@ -1130,8 +1145,203 @@ class MoveTargetEditDialog(tk.Toplevel):
             "move_mode": mode,
             "target_x": target_x, "target_y": target_y,
             "target_w": target_w, "target_h": target_h,
+            "maximize": self.var_maximize.get(),
         }
         self.destroy()
+
+
+# ═══════════════════════════════════════════════════════════
+#  레지스트리 적용 다이얼로그
+# ═══════════════════════════════════════════════════════════
+class RegistryDialog(tk.Toplevel):
+    def __init__(self, parent, log_callback):
+        super().__init__(parent)
+        self.log_callback = log_callback
+        self.title("레지스트리 설정 적용")
+        self.geometry("700x450")
+        self.grab_set()
+
+        frame = ttk.Frame(self, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(0, weight=1)
+
+        # Treeview
+        cols = ("적용", "설명", "경로", "값")
+        self.tree = ttk.Treeview(frame, columns=cols, show="headings", height=15)
+        self.tree.heading("적용", text="적용")
+        self.tree.heading("설명", text="설명")
+        self.tree.heading("경로", text="레지스트리 경로")
+        self.tree.heading("값", text="값")
+        self.tree.column("적용", width=40, anchor=tk.CENTER)
+        self.tree.column("설명", width=250)
+        self.tree.column("경로", width=250)
+        self.tree.column("값", width=100)
+        self.tree.grid(row=0, column=0, sticky=tk.NSEW)
+
+        scroll = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=self.tree.yview)
+        scroll.grid(row=0, column=1, sticky=tk.NS)
+        self.tree.config(yscrollcommand=scroll.set)
+        self.tree.bind("<Double-1>", self._toggle_item)
+
+        # 버튼
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(8, 0))
+        self.var_dry_run = tk.BooleanVar(value=False)
+        ttk.Checkbutton(btn_frame, text="시뮬레이션", variable=self.var_dry_run).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(btn_frame, text="선택 적용", command=self._apply_selected).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_frame, text="전체 적용", command=self._apply_all).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_frame, text="닫기", command=self.destroy).pack(side=tk.LEFT)
+
+        self._load_items()
+
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.transient(parent)
+        self.update_idletasks()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        px, py = parent.winfo_x(), parent.winfo_y()
+        dw, dh = self.winfo_width(), self.winfo_height()
+        self.geometry(f"+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
+
+    def _load_items(self):
+        self.items = win11_setup.load_registry_items()
+        self._enabled = [True] * len(self.items)
+        for i, item in enumerate(self.items):
+            desc = item.get("description", item["name"])
+            short_path = item["path"].split("\\")[-1] if "\\" in item["path"] else item["path"]
+            self.tree.insert("", tk.END, iid=str(i),
+                             values=("O", desc, short_path, str(item["value"])[:30]))
+
+    def _toggle_item(self, event):
+        item = self.tree.identify_row(event.y)
+        if not item:
+            return
+        idx = int(item)
+        self._enabled[idx] = not self._enabled[idx]
+        mark = "O" if self._enabled[idx] else ""
+        vals = list(self.tree.item(item, "values"))
+        vals[0] = mark
+        self.tree.item(item, values=vals)
+
+    def _apply_selected(self):
+        selected = [self.items[i] for i in range(len(self.items)) if self._enabled[i]]
+        if not selected:
+            messagebox.showinfo("알림", "적용할 항목이 없습니다.", parent=self)
+            return
+        self._run_apply(selected)
+
+    def _apply_all(self):
+        if not self.items:
+            messagebox.showinfo("알림", "항목이 없습니다.", parent=self)
+            return
+        self._run_apply(self.items)
+
+    def _run_apply(self, items):
+        dry_run = self.var_dry_run.get()
+        mode_str = "[시뮬레이션] " if dry_run else ""
+        self.log_callback(f"[레지스트리] {mode_str}{len(items)}개 항목 적용 시작")
+
+        def _worker():
+            success, fail = win11_setup.apply_registry_items(items, self.log_callback, dry_run)
+            self.log_callback(f"[레지스트리] {mode_str}완료: 성공 {success}개, 실패 {fail}개")
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+
+# ═══════════════════════════════════════════════════════════
+#  시스템 명령 실행 다이얼로그
+# ═══════════════════════════════════════════════════════════
+class CommandsDialog(tk.Toplevel):
+    def __init__(self, parent, log_callback):
+        super().__init__(parent)
+        self.log_callback = log_callback
+        self.title("시스템 명령 실행")
+        self.geometry("700x450")
+        self.grab_set()
+
+        frame = ttk.Frame(self, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(0, weight=1)
+
+        cols = ("적용", "설명", "유형", "명령어")
+        self.tree = ttk.Treeview(frame, columns=cols, show="headings", height=15)
+        self.tree.heading("적용", text="적용")
+        self.tree.heading("설명", text="설명")
+        self.tree.heading("유형", text="유형")
+        self.tree.heading("명령어", text="명령어")
+        self.tree.column("적용", width=40, anchor=tk.CENTER)
+        self.tree.column("설명", width=280)
+        self.tree.column("유형", width=60, anchor=tk.CENTER)
+        self.tree.column("명령어", width=260)
+        self.tree.grid(row=0, column=0, sticky=tk.NSEW)
+
+        scroll = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=self.tree.yview)
+        scroll.grid(row=0, column=1, sticky=tk.NS)
+        self.tree.config(yscrollcommand=scroll.set)
+        self.tree.bind("<Double-1>", self._toggle_item)
+
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(8, 0))
+        self.var_dry_run = tk.BooleanVar(value=False)
+        ttk.Checkbutton(btn_frame, text="시뮬레이션", variable=self.var_dry_run).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Button(btn_frame, text="선택 실행", command=self._run_selected).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_frame, text="전체 실행", command=self._run_all).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_frame, text="닫기", command=self.destroy).pack(side=tk.LEFT)
+
+        self._load_items()
+
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.transient(parent)
+        self.update_idletasks()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        px, py = parent.winfo_x(), parent.winfo_y()
+        dw, dh = self.winfo_width(), self.winfo_height()
+        self.geometry(f"+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
+
+    def _load_items(self):
+        self.items = win11_setup.load_command_items()
+        self._enabled = [True] * len(self.items)
+        for i, item in enumerate(self.items):
+            desc = item.get("description", "")
+            cmd_short = item["command"][:50] + "..." if len(item["command"]) > 50 else item["command"]
+            self.tree.insert("", tk.END, iid=str(i),
+                             values=("O", desc, item["type"].upper(), cmd_short))
+
+    def _toggle_item(self, event):
+        item = self.tree.identify_row(event.y)
+        if not item:
+            return
+        idx = int(item)
+        self._enabled[idx] = not self._enabled[idx]
+        mark = "O" if self._enabled[idx] else ""
+        vals = list(self.tree.item(item, "values"))
+        vals[0] = mark
+        self.tree.item(item, values=vals)
+
+    def _run_selected(self):
+        selected = [self.items[i] for i in range(len(self.items)) if self._enabled[i]]
+        if not selected:
+            messagebox.showinfo("알림", "실행할 항목이 없습니다.", parent=self)
+            return
+        self._run_commands(selected)
+
+    def _run_all(self):
+        if not self.items:
+            messagebox.showinfo("알림", "항목이 없습니다.", parent=self)
+            return
+        self._run_commands(self.items)
+
+    def _run_commands(self, items):
+        dry_run = self.var_dry_run.get()
+        mode_str = "[시뮬레이션] " if dry_run else ""
+        self.log_callback(f"[명령어] {mode_str}{len(items)}개 명령 실행 시작")
+
+        def _worker():
+            success, fail = win11_setup.apply_command_items(items, self.log_callback, dry_run)
+            self.log_callback(f"[명령어] {mode_str}완료: 성공 {success}개, 실패 {fail}개")
+
+        threading.Thread(target=_worker, daemon=True).start()
 
 
 class AutoExecApp:
@@ -1169,13 +1379,9 @@ class AutoExecApp:
         root = self.root
         root.columnconfigure(0, weight=1)
 
-        # ── row 0: 최상위 체크박스 ──
-        chk_frame = ttk.Frame(root)
-        chk_frame.grid(row=0, column=0, sticky=tk.EW, padx=8, pady=(6, 0))
-
+        # ── 메뉴바 ──
         self.var_topmost = tk.BooleanVar(value=self.settings["window"].get("topmost", False))
-        ttk.Checkbutton(chk_frame, text="최상위", variable=self.var_topmost,
-                        command=self._toggle_topmost).pack(side=tk.LEFT)
+        self._build_menubar()
         self._apply_topmost()
 
         # ── row 1: GitHub 다운로드 ──
@@ -1342,6 +1548,65 @@ class AutoExecApp:
 
     def _apply_topmost(self):
         self.root.attributes("-topmost", self.var_topmost.get())
+
+    # ─── 메뉴바 ─────────────────────────────────────────
+    def _build_menubar(self):
+        menubar = tk.Menu(self.root)
+
+        # 설정 메뉴
+        menu_settings = tk.Menu(menubar, tearoff=0)
+        menu_settings.add_checkbutton(label="최상위", variable=self.var_topmost, command=self._toggle_topmost)
+        menu_settings.add_command(label="인트라넷 등록", command=self._menu_intranet)
+        menubar.add_cascade(label="설정", menu=menu_settings)
+
+        # 시스템 메뉴
+        menu_system = tk.Menu(menubar, tearoff=0)
+        menu_system.add_command(label="레지스트리 적용...", command=self._menu_registry)
+        menu_system.add_command(label="시스템 명령 실행...", command=self._menu_commands)
+        menubar.add_cascade(label="시스템", menu=menu_system)
+
+        # 백업 메뉴
+        menu_backup = tk.Menu(menubar, tearoff=0)
+        menu_backup.add_command(label="폴더 백업...", command=self._menu_backup)
+        menu_backup.add_command(label="폴더 복구...", command=self._menu_restore)
+        menubar.add_cascade(label="백업", menu=menu_backup)
+
+        self.root.config(menu=menubar)
+
+    def _menu_intranet(self):
+        def _worker():
+            win11_setup.setup_intranet_zone(self.log)
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _menu_registry(self):
+        RegistryDialog(self.root, self.log)
+
+    def _menu_commands(self):
+        CommandsDialog(self.root, self.log)
+
+    def _menu_backup(self):
+        last_dest = win11_folder.get_last_backup_destination()
+        dest = filedialog.askdirectory(title="백업 폴더 선택", initialdir=last_dest, parent=self.root)
+        if not dest:
+            return
+
+        def _worker():
+            win11_folder.backup(dest, self.log)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _menu_restore(self):
+        last_dest = win11_folder.get_last_backup_destination()
+        src = filedialog.askdirectory(title="복구할 백업 폴더 선택", initialdir=last_dest, parent=self.root)
+        if not src:
+            return
+        if not messagebox.askyesno("복구 확인", "기존 파일이 덮어쓰기될 수 있습니다.\n계속하시겠습니까?", parent=self.root):
+            return
+
+        def _worker():
+            win11_folder.restore(src, self.log)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     # ─── 로그 ────────────────────────────────────────────
     def _clear_log(self):
@@ -1633,7 +1898,7 @@ class AutoExecApp:
         if dlg.result:
             r = dlg.result
             db_upsert_move_target(None, r["name"], r["exe_name"], r["enabled"], r["move_mode"],
-                                  r["target_x"], r["target_y"], r["target_w"], r["target_h"])
+                                  r["target_x"], r["target_y"], r["target_w"], r["target_h"], r["maximize"])
             self._refresh_move_list()
             self.log(f"[이동대상] 추가: {r['name']} ({r['exe_name']})")
 
@@ -1646,7 +1911,7 @@ class AutoExecApp:
         if dlg.result:
             r = dlg.result
             db_upsert_move_target(r["id"], r["name"], r["exe_name"], r["enabled"], r["move_mode"],
-                                  r["target_x"], r["target_y"], r["target_w"], r["target_h"])
+                                  r["target_x"], r["target_y"], r["target_w"], r["target_h"], r["maximize"])
             self._refresh_move_list()
             self.log(f"[이동대상] 수정: {r['name']} ({r['exe_name']})")
 
@@ -1684,6 +1949,7 @@ class AutoExecApp:
             return
         exe_name = target["exe_name"].lower()
         move_mode = target.get("move_mode", "sub_monitor")
+        maximize = target.get("maximize", 1)
 
         def _do_move():
             hwnds = self._find_windows_by_exe(exe_name)
@@ -1720,8 +1986,9 @@ class AutoExecApp:
                         ctypes.windll.user32.SetWindowPos(
                             hwnd, 0, tx + 100, ty + 100, tw - 200, th - 200, 0x0004
                         )
-                        time.sleep(0.1)
-                        ctypes.windll.user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE
+                        if maximize:
+                            time.sleep(0.1)
+                            ctypes.windll.user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE
                     else:  # custom, save_position
                         ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
                         time.sleep(0.1)
@@ -1964,26 +2231,47 @@ class AutoExecApp:
                 t.start()
 
     def _run_boot_tasks(self):
-        """부팅시 1회 실행 태스크 처리 (앱 시작 시 1회만 호출)"""
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        """Windows 부팅 후 1회 실행 태스크 처리"""
+        now = datetime.now()
+        # Windows 부팅 시각 계산
+        uptime_ms = ctypes.windll.kernel32.GetTickCount64()
+        boot_time = now - timedelta(milliseconds=uptime_ms)
+        now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+
+        # 부팅 후 10분 이상 경과하면 실행하지 않음
+        uptime_min = uptime_ms / 60000
+        if uptime_min > 10:
+            self.log(f"[부팅] 부팅 후 {int(uptime_min)}분 경과 - 부팅 태스크 건너뜀")
+            return
+
         boot_count = 0
         for task in self.task_data:
             if not task["enabled"]:
                 continue
             if task.get("repeat_mode") != "boot":
                 continue
-            # 오늘 이미 실행했으면 건너뜀
+            # 마지막 실행이 이번 부팅 이후였으면 건너뜀
             last_run = str(task.get("last_run", "") or "")
-            if last_run[:10] == today_str:
+            if last_run:
+                try:
+                    last_dt = datetime.strptime(last_run[:19], "%Y-%m-%d %H:%M:%S")
+                    if last_dt > boot_time:
+                        continue
+                except ValueError:
+                    try:
+                        last_dt = datetime.strptime(last_run[:10], "%Y-%m-%d")
+                        if last_dt.date() == now.date():
+                            continue  # 날짜만 있는 레거시 데이터: 오늘이면 건너뜀
+                    except ValueError:
+                        pass
+            if task["skip_holiday"] and self._is_closed_day(now):
                 continue
-            if task["skip_holiday"] and self._is_closed_day(datetime.now()):
-                continue
-            task["last_run"] = today_str
-            db_update_task_last_run(task["id"], today_str)
-            self._execute_task(task, today_str)
+            task["last_run"] = now_str
+            db_update_task_last_run(task["id"], now_str)
+            self._execute_task(task, now_str)
             boot_count += 1
         if boot_count:
-            self.log(f"[부팅] {boot_count}개 태스크 실행")
+            self.log(f"[부팅] {boot_count}개 태스크 실행 (부팅 시각: {boot_time.strftime('%H:%M:%S')})")
 
     def _check_auto_tasks(self, current_hm, today_str, is_closed):
         """자동실행 체크 (매일 1회 + 반복 모드 지원)"""
@@ -2236,6 +2524,7 @@ class AutoExecApp:
                     continue
                 exe_name = target["exe_name"].lower()
                 move_mode = target.get("move_mode", "sub_monitor")
+                maximize = target.get("maximize", 1)
                 hwnds = self._find_windows_by_exe(exe_name)
                 if not hwnds:
                     continue
@@ -2261,8 +2550,9 @@ class AutoExecApp:
                             ctypes.windll.user32.SetWindowPos(
                                 hwnd, 0, tx + 100, ty + 100, tw - 200, th - 200, 0x0004
                             )
-                            time.sleep(0.1)
-                            ctypes.windll.user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE
+                            if maximize:
+                                time.sleep(0.1)
+                                ctypes.windll.user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE
                         else:  # custom, save_position
                             ctypes.windll.user32.ShowWindow(hwnd, 9)
                             time.sleep(0.1)
