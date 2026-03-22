@@ -1151,13 +1151,94 @@ class MoveTargetEditDialog(tk.Toplevel):
 
 
 # ═══════════════════════════════════════════════════════════
-#  레지스트리 적용 다이얼로그
+#  레지스트리 관리 다이얼로그
 # ═══════════════════════════════════════════════════════════
+class RegistryItemEditDialog(tk.Toplevel):
+    """레지스트리 항목 추가/편집 다이얼로그"""
+    _TYPES = ["REG_DWORD", "REG_SZ", "REG_EXPAND_SZ", "REG_BINARY", "REG_QWORD", "REG_MULTI_SZ"]
+
+    def __init__(self, parent, item=None):
+        super().__init__(parent)
+        self.result = None
+        self.title("레지스트리 편집" if item else "레지스트리 추가")
+        self.resizable(False, False)
+        self.grab_set()
+
+        frame = ttk.Frame(self, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text="설명:").grid(row=0, column=0, sticky=tk.W, pady=3)
+        self.ent_desc = ttk.Entry(frame, width=50)
+        self.ent_desc.grid(row=0, column=1, columnspan=2, pady=3, padx=(5, 0))
+
+        ttk.Label(frame, text="경로:").grid(row=1, column=0, sticky=tk.W, pady=3)
+        self.ent_path = ttk.Entry(frame, width=50)
+        self.ent_path.grid(row=1, column=1, columnspan=2, pady=3, padx=(5, 0))
+
+        ttk.Label(frame, text="이름:").grid(row=2, column=0, sticky=tk.W, pady=3)
+        self.ent_name = ttk.Entry(frame, width=30)
+        self.ent_name.grid(row=2, column=1, columnspan=2, pady=3, padx=(5, 0), sticky=tk.W)
+
+        ttk.Label(frame, text="유형:").grid(row=3, column=0, sticky=tk.W, pady=3)
+        self.var_type = tk.StringVar(value="REG_DWORD")
+        ttk.Combobox(frame, textvariable=self.var_type, values=self._TYPES,
+                     state="readonly", width=15).grid(row=3, column=1, sticky=tk.W, padx=(5, 0), pady=3)
+
+        ttk.Label(frame, text="값:").grid(row=4, column=0, sticky=tk.W, pady=3)
+        self.ent_value = ttk.Entry(frame, width=50)
+        self.ent_value.grid(row=4, column=1, columnspan=2, pady=3, padx=(5, 0))
+
+        if item:
+            self.ent_desc.insert(0, item.get("description", ""))
+            self.ent_path.insert(0, item.get("path", ""))
+            self.ent_name.insert(0, item.get("name", ""))
+            self.var_type.set(item.get("type", "REG_DWORD"))
+            self.ent_value.insert(0, str(item.get("value", "")))
+
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=5, column=0, columnspan=3, pady=(10, 0))
+        ttk.Button(btn_frame, text="확인", command=self._on_ok).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="취소", command=self.destroy).pack(side=tk.LEFT, padx=5)
+
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.transient(parent)
+        self.update_idletasks()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        px, py = parent.winfo_x(), parent.winfo_y()
+        dw, dh = self.winfo_width(), self.winfo_height()
+        self.geometry(f"+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
+        self.focus_force()
+        self.ent_desc.focus_set()
+
+    def _on_ok(self):
+        path = self.ent_path.get().strip()
+        name = self.ent_name.get().strip()
+        if not path or not name:
+            messagebox.showwarning("입력 오류", "경로와 이름을 입력하세요.", parent=self)
+            return
+        reg_type = self.var_type.get()
+        value_str = self.ent_value.get().strip()
+        # 값 변환
+        if reg_type in ("REG_DWORD", "REG_QWORD"):
+            try:
+                value = int(value_str)
+            except ValueError:
+                messagebox.showwarning("입력 오류", "정수 값을 입력하세요.", parent=self)
+                return
+        else:
+            value = value_str
+        self.result = {
+            "path": path, "name": name, "type": reg_type,
+            "value": value, "description": self.ent_desc.get().strip(),
+        }
+        self.destroy()
+
+
 class RegistryDialog(tk.Toplevel):
     def __init__(self, parent, log_callback):
         super().__init__(parent)
         self.log_callback = log_callback
-        self.title("레지스트리 설정 적용")
+        self.title("레지스트리 관리")
         self.geometry("700x450")
         self.grab_set()
 
@@ -1166,97 +1247,129 @@ class RegistryDialog(tk.Toplevel):
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
 
-        # Treeview
-        cols = ("적용", "설명", "경로", "값")
+        cols = ("설명", "경로", "이름", "값")
         self.tree = ttk.Treeview(frame, columns=cols, show="headings", height=15)
-        self.tree.heading("적용", text="적용")
         self.tree.heading("설명", text="설명")
         self.tree.heading("경로", text="레지스트리 경로")
+        self.tree.heading("이름", text="이름")
         self.tree.heading("값", text="값")
-        self.tree.column("적용", width=40, anchor=tk.CENTER)
         self.tree.column("설명", width=250)
-        self.tree.column("경로", width=250)
-        self.tree.column("값", width=100)
+        self.tree.column("경로", width=200)
+        self.tree.column("이름", width=120)
+        self.tree.column("값", width=80)
         self.tree.grid(row=0, column=0, sticky=tk.NSEW)
 
         scroll = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=self.tree.yview)
         scroll.grid(row=0, column=1, sticky=tk.NS)
         self.tree.config(yscrollcommand=scroll.set)
-        self.tree.bind("<Double-1>", self._toggle_item)
+        self.tree.bind("<Double-1>", self._apply_one)
 
-        # 버튼
         btn_frame = ttk.Frame(frame)
         btn_frame.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(8, 0))
-        self.var_dry_run = tk.BooleanVar(value=False)
-        ttk.Checkbutton(btn_frame, text="시뮬레이션", variable=self.var_dry_run).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(btn_frame, text="선택 적용", command=self._apply_selected).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(btn_frame, text="전체 적용", command=self._apply_all).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(btn_frame, text="닫기", command=self.destroy).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="추가", command=self._add_item).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_frame, text="편집", command=self._edit_item).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_frame, text="삭제", command=self._delete_item).pack(side=tk.LEFT, padx=(0, 15))
+        ttk.Button(btn_frame, text="전체 적용", command=self._apply_all).pack(side=tk.LEFT)
 
         self._load_items()
 
-        self.bind("<Escape>", lambda e: self.destroy())
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.bind("<Escape>", lambda e: self._on_close())
         self.transient(parent)
         self.update_idletasks()
-        pw, ph = parent.winfo_width(), parent.winfo_height()
-        px, py = parent.winfo_x(), parent.winfo_y()
-        dw, dh = self.winfo_width(), self.winfo_height()
-        self.geometry(f"+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
+        saved = _dialog_positions.get("RegistryDialog")
+        if saved:
+            self.geometry(saved)
+        else:
+            pw, ph = parent.winfo_width(), parent.winfo_height()
+            px, py = parent.winfo_x(), parent.winfo_y()
+            dw, dh = self.winfo_width(), self.winfo_height()
+            self.geometry(f"+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
+        self.focus_force()
+
+    def _on_close(self):
+        _dialog_positions["RegistryDialog"] = self.geometry()
+        self.destroy()
 
     def _load_items(self):
+        for c in self.tree.get_children():
+            self.tree.delete(c)
         self.items = win11_setup.load_registry_items()
-        self._enabled = [True] * len(self.items)
         for i, item in enumerate(self.items):
             desc = item.get("description", item["name"])
             short_path = item["path"].split("\\")[-1] if "\\" in item["path"] else item["path"]
             self.tree.insert("", tk.END, iid=str(i),
-                             values=("O", desc, short_path, str(item["value"])[:30]))
+                             values=(desc, short_path, item["name"], str(item["value"])[:30]))
 
-    def _toggle_item(self, event):
-        item = self.tree.identify_row(event.y)
-        if not item:
+    def _apply_one(self, event):
+        """더블클릭: 해당 항목 1개 적용"""
+        row = self.tree.identify_row(event.y)
+        if not row:
             return
-        idx = int(item)
-        self._enabled[idx] = not self._enabled[idx]
-        mark = "O" if self._enabled[idx] else ""
-        vals = list(self.tree.item(item, "values"))
-        vals[0] = mark
-        self.tree.item(item, values=vals)
+        item = self.items[int(row)]
+        desc = item.get("description", item["name"])
+        self.log_callback(f"[레지스트리] 적용: {desc}")
 
-    def _apply_selected(self):
-        selected = [self.items[i] for i in range(len(self.items)) if self._enabled[i]]
-        if not selected:
-            messagebox.showinfo("알림", "적용할 항목이 없습니다.", parent=self)
+        def _worker():
+            win11_setup.apply_registry_items([item], self.log_callback)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _add_item(self):
+        dlg = RegistryItemEditDialog(self)
+        self.wait_window(dlg)
+        if dlg.result:
+            self.items.append(dlg.result)
+            win11_setup.save_registry_items(self.items)
+            self._load_items()
+
+    def _edit_item(self):
+        sel = self.tree.selection()
+        if not sel:
             return
-        self._run_apply(selected)
+        idx = int(sel[0])
+        dlg = RegistryItemEditDialog(self, self.items[idx])
+        self.wait_window(dlg)
+        if dlg.result:
+            self.items[idx] = dlg.result
+            win11_setup.save_registry_items(self.items)
+            self._load_items()
+
+    def _delete_item(self):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        idx = int(sel[0])
+        desc = self.items[idx].get("description", self.items[idx]["name"])
+        if messagebox.askyesno("삭제 확인", f"'{desc}' 항목을 삭제하시겠습니까?", parent=self):
+            del self.items[idx]
+            win11_setup.save_registry_items(self.items)
+            self._load_items()
 
     def _apply_all(self):
         if not self.items:
-            messagebox.showinfo("알림", "항목이 없습니다.", parent=self)
             return
-        self._run_apply(self.items)
-
-    def _run_apply(self, items):
-        dry_run = self.var_dry_run.get()
-        mode_str = "[시뮬레이션] " if dry_run else ""
-        self.log_callback(f"[레지스트리] {mode_str}{len(items)}개 항목 적용 시작")
+        self.log_callback(f"[레지스트리] {len(self.items)}개 항목 전체 적용 시작")
 
         def _worker():
-            success, fail = win11_setup.apply_registry_items(items, self.log_callback, dry_run)
-            self.log_callback(f"[레지스트리] {mode_str}완료: 성공 {success}개, 실패 {fail}개")
+            success, fail = win11_setup.apply_registry_items(self.items, self.log_callback)
+            self.log_callback(f"[레지스트리] 완료: 성공 {success}개, 실패 {fail}개")
 
         threading.Thread(target=_worker, daemon=True).start()
 
 
+# 다이얼로그 위치 기억 저장소 (클래스명 → geometry 문자열)
+_dialog_positions: dict[str, str] = {}
+
+
 # ═══════════════════════════════════════════════════════════
-#  시스템 명령 실행 다이얼로그
+#  백업 경로 관리 다이얼로그
 # ═══════════════════════════════════════════════════════════
-class CommandsDialog(tk.Toplevel):
-    def __init__(self, parent, log_callback):
+class BackupPathsDialog(tk.Toplevel):
+    def __init__(self, parent):
         super().__init__(parent)
-        self.log_callback = log_callback
-        self.title("시스템 명령 실행")
-        self.geometry("700x450")
+        self.title("백업 경로 관리")
+        self.geometry("650x400")
         self.grab_set()
 
         frame = ttk.Frame(self, padding=10)
@@ -1264,84 +1377,112 @@ class CommandsDialog(tk.Toplevel):
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
 
-        cols = ("적용", "설명", "유형", "명령어")
+        cols = ("경로", "목적지", "서비스", "제외")
         self.tree = ttk.Treeview(frame, columns=cols, show="headings", height=15)
-        self.tree.heading("적용", text="적용")
-        self.tree.heading("설명", text="설명")
-        self.tree.heading("유형", text="유형")
-        self.tree.heading("명령어", text="명령어")
-        self.tree.column("적용", width=40, anchor=tk.CENTER)
-        self.tree.column("설명", width=280)
-        self.tree.column("유형", width=60, anchor=tk.CENTER)
-        self.tree.column("명령어", width=260)
+        self.tree.heading("경로", text="원본 경로")
+        self.tree.heading("목적지", text="백업 폴더명")
+        self.tree.heading("서비스", text="서비스")
+        self.tree.heading("제외", text="제외 항목")
+        self.tree.column("경로", width=300)
+        self.tree.column("목적지", width=120)
+        self.tree.column("서비스", width=70)
+        self.tree.column("제외", width=120)
         self.tree.grid(row=0, column=0, sticky=tk.NSEW)
 
         scroll = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=self.tree.yview)
         scroll.grid(row=0, column=1, sticky=tk.NS)
         self.tree.config(yscrollcommand=scroll.set)
-        self.tree.bind("<Double-1>", self._toggle_item)
+
+        # 백업 저장 위치
+        dest_frame = ttk.Frame(frame)
+        dest_frame.grid(row=1, column=0, columnspan=2, sticky=tk.EW, pady=(6, 0))
+        ttk.Label(dest_frame, text="백업 위치:").pack(side=tk.LEFT)
+        self.var_dest = tk.StringVar(value=win11_folder.get_last_backup_destination() or "")
+        self.ent_dest = ttk.Entry(dest_frame, textvariable=self.var_dest, width=50)
+        self.ent_dest.pack(side=tk.LEFT, padx=(5, 3), fill=tk.X, expand=True)
+        ttk.Button(dest_frame, text="..", width=3, command=self._browse_dest).pack(side=tk.LEFT)
 
         btn_frame = ttk.Frame(frame)
-        btn_frame.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(8, 0))
-        self.var_dry_run = tk.BooleanVar(value=False)
-        ttk.Checkbutton(btn_frame, text="시뮬레이션", variable=self.var_dry_run).pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Button(btn_frame, text="선택 실행", command=self._run_selected).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(btn_frame, text="전체 실행", command=self._run_all).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(btn_frame, text="닫기", command=self.destroy).pack(side=tk.LEFT)
+        btn_frame.grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=(8, 0))
+        ttk.Button(btn_frame, text="추가", command=self._add_path).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_frame, text="삭제", command=self._remove_path).pack(side=tk.LEFT)
 
         self._load_items()
 
-        self.bind("<Escape>", lambda e: self.destroy())
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.bind("<Escape>", lambda e: self._on_close())
         self.transient(parent)
         self.update_idletasks()
-        pw, ph = parent.winfo_width(), parent.winfo_height()
-        px, py = parent.winfo_x(), parent.winfo_y()
-        dw, dh = self.winfo_width(), self.winfo_height()
-        self.geometry(f"+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
+        saved = _dialog_positions.get("BackupPathsDialog")
+        if saved:
+            self.geometry(saved)
+        else:
+            pw, ph = parent.winfo_width(), parent.winfo_height()
+            px, py = parent.winfo_x(), parent.winfo_y()
+            dw, dh = self.winfo_width(), self.winfo_height()
+            self.geometry(f"+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
+        self.focus_force()
+
+    def _on_close(self):
+        # 백업 위치 저장
+        dest = self.var_dest.get().strip()
+        if dest:
+            win11_folder.save_last_backup_destination(dest)
+        _dialog_positions["BackupPathsDialog"] = self.geometry()
+        self.destroy()
+
+    def _browse_dest(self):
+        path = filedialog.askdirectory(title="백업 저장 위치 선택", initialdir=self.var_dest.get() or None, parent=self)
+        if path:
+            self.var_dest.set(os.path.normpath(path))
 
     def _load_items(self):
-        self.items = win11_setup.load_command_items()
-        self._enabled = [True] * len(self.items)
-        for i, item in enumerate(self.items):
-            desc = item.get("description", "")
-            cmd_short = item["command"][:50] + "..." if len(item["command"]) > 50 else item["command"]
-            self.tree.insert("", tk.END, iid=str(i),
-                             values=("O", desc, item["type"].upper(), cmd_short))
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        config = win11_folder.load_config()
+        self.paths = config.get("backup_paths", [])
+        for i, item in enumerate(self.paths):
+            info = win11_folder.normalize_path_item(item)
+            expanded = win11_folder.expand_path(info["path"])
+            dest = info.get("destination") or ""
+            svc = info.get("service") or ""
+            exclude = ", ".join(info.get("exclude") or [])
+            self.tree.insert("", tk.END, iid=str(i), values=(expanded, dest, svc, exclude))
 
-    def _toggle_item(self, event):
-        item = self.tree.identify_row(event.y)
-        if not item:
+    def _add_path(self):
+        path = filedialog.askdirectory(title="백업할 폴더/파일 선택", parent=self)
+        if not path:
             return
-        idx = int(item)
-        self._enabled[idx] = not self._enabled[idx]
-        mark = "O" if self._enabled[idx] else ""
-        vals = list(self.tree.item(item, "values"))
-        vals[0] = mark
-        self.tree.item(item, values=vals)
 
-    def _run_selected(self):
-        selected = [self.items[i] for i in range(len(self.items)) if self._enabled[i]]
-        if not selected:
-            messagebox.showinfo("알림", "실행할 항목이 없습니다.", parent=self)
+        path = os.path.normpath(path)
+        # 목적지 이름 입력
+        dest_name = os.path.basename(path)
+
+        # 중복 체크
+        config = win11_folder.load_config()
+        for item in config.get("backup_paths", []):
+            info = win11_folder.normalize_path_item(item)
+            if os.path.normpath(win11_folder.expand_path(info["path"])) == path:
+                messagebox.showinfo("알림", "이미 등록된 경로입니다.", parent=self)
+                return
+
+        config["backup_paths"].append({"path": path, "destination": dest_name})
+        win11_folder.save_config(config)
+        self._load_items()
+
+    def _remove_path(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo("알림", "삭제할 항목을 선택하세요.", parent=self)
             return
-        self._run_commands(selected)
-
-    def _run_all(self):
-        if not self.items:
-            messagebox.showinfo("알림", "항목이 없습니다.", parent=self)
+        idx = int(sel[0])
+        info = win11_folder.normalize_path_item(self.paths[idx])
+        if not messagebox.askyesno("삭제 확인", f"'{info['path']}' 경로를 제거하시겠습니까?", parent=self):
             return
-        self._run_commands(self.items)
-
-    def _run_commands(self, items):
-        dry_run = self.var_dry_run.get()
-        mode_str = "[시뮬레이션] " if dry_run else ""
-        self.log_callback(f"[명령어] {mode_str}{len(items)}개 명령 실행 시작")
-
-        def _worker():
-            success, fail = win11_setup.apply_command_items(items, self.log_callback, dry_run)
-            self.log_callback(f"[명령어] {mode_str}완료: 성공 {success}개, 실패 {fail}개")
-
-        threading.Thread(target=_worker, daemon=True).start()
+        config = win11_folder.load_config()
+        del config["backup_paths"][idx]
+        win11_folder.save_config(config)
+        self._load_items()
 
 
 class AutoExecApp:
@@ -1559,17 +1700,14 @@ class AutoExecApp:
         menu_settings.add_command(label="인트라넷 등록", command=self._menu_intranet)
         menubar.add_cascade(label="설정", menu=menu_settings)
 
-        # 시스템 메뉴
-        menu_system = tk.Menu(menubar, tearoff=0)
-        menu_system.add_command(label="레지스트리 적용...", command=self._menu_registry)
-        menu_system.add_command(label="시스템 명령 실행...", command=self._menu_commands)
-        menubar.add_cascade(label="시스템", menu=menu_system)
-
-        # 백업 메뉴
+        # 관리 메뉴
         menu_backup = tk.Menu(menubar, tearoff=0)
+        menu_backup.add_command(label="레지스트리 관리...", command=self._menu_registry)
+        menu_backup.add_command(label="백업 경로 관리...", command=self._menu_backup_paths)
+        menu_backup.add_separator()
         menu_backup.add_command(label="폴더 백업...", command=self._menu_backup)
         menu_backup.add_command(label="폴더 복구...", command=self._menu_restore)
-        menubar.add_cascade(label="백업", menu=menu_backup)
+        menubar.add_cascade(label="관리", menu=menu_backup)
 
         self.root.config(menu=menubar)
 
@@ -1581,14 +1719,15 @@ class AutoExecApp:
     def _menu_registry(self):
         RegistryDialog(self.root, self.log)
 
-    def _menu_commands(self):
-        CommandsDialog(self.root, self.log)
+    def _menu_backup_paths(self):
+        BackupPathsDialog(self.root)
 
     def _menu_backup(self):
-        last_dest = win11_folder.get_last_backup_destination()
-        dest = filedialog.askdirectory(title="백업 폴더 선택", initialdir=last_dest, parent=self.root)
-        if not dest:
-            return
+        dest = win11_folder.get_last_backup_destination()
+        if not dest or not os.path.isdir(dest):
+            dest = filedialog.askdirectory(title="백업 폴더 선택", initialdir=dest, parent=self.root)
+            if not dest:
+                return
 
         def _worker():
             win11_folder.backup(dest, self.log)

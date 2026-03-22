@@ -92,6 +92,12 @@ def load_registry_items() -> list[dict]:
     return config.get("registry_items", [])
 
 
+def save_registry_items(items: list[dict]):
+    config = {"registry_items": items, "description": "백업할 레지스트리 항목 목록입니다."}
+    with open(REGISTRY_CONFIG, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=4)
+
+
 def apply_registry_items(items: list[dict], log: Callable[[str], None], dry_run: bool = False) -> tuple[int, int]:
     success, fail = 0, 0
     for item in items:
