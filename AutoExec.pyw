@@ -96,6 +96,12 @@ def db_init():
             sort_order INTEGER NOT NULL DEFAULT 0
         )
     """)
+    # tasks 테이블에 위치 필드 추가 (폴더 창 위치 지정용)
+    for col, default in [("target_x", 0), ("target_y", 0), ("target_w", 0), ("target_h", 0)]:
+        try:
+            cur.execute(f"ALTER TABLE tasks ADD COLUMN {col} INTEGER NOT NULL DEFAULT {default}")
+        except Exception:
+            pass
     cur.execute("""
         CREATE TABLE IF NOT EXISTS closed_days (
             date_int INTEGER PRIMARY KEY,
@@ -191,7 +197,8 @@ def db_fetch_tasks():
 
 
 def db_upsert_task(task_id, name, enabled, run_time, executable, arguments, python_venv, skip_holiday,
-                   repeat_mode="once", repeat_interval=0, repeat_end_time="23:59"):
+                   repeat_mode="once", repeat_interval=0, repeat_end_time="23:59",
+                   target_x=0, target_y=0, target_w=0, target_h=0):
     """자동실행 추가 또는 수정"""
     conn = get_db_connection()
     try:
@@ -200,17 +207,20 @@ def db_upsert_task(task_id, name, enabled, run_time, executable, arguments, pyth
             cur.execute(
                 "UPDATE tasks SET name=?, enabled=?, run_time=?, executable=?, "
                 "arguments=?, python_venv=?, skip_holiday=?, "
-                "repeat_mode=?, repeat_interval=?, repeat_end_time=? WHERE id=?",
+                "repeat_mode=?, repeat_interval=?, repeat_end_time=?, "
+                "target_x=?, target_y=?, target_w=?, target_h=? WHERE id=?",
                 (name, int(enabled), run_time, executable, arguments, python_venv, int(skip_holiday),
-                 repeat_mode, repeat_interval, repeat_end_time, task_id),
+                 repeat_mode, repeat_interval, repeat_end_time,
+                 target_x, target_y, target_w, target_h, task_id),
             )
         else:
             cur.execute(
                 "INSERT INTO tasks (name, enabled, run_time, executable, arguments, python_venv, skip_holiday, "
-                "repeat_mode, repeat_interval, repeat_end_time, sort_order) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?, (SELECT IFNULL(MAX(sort_order),0)+1 FROM tasks))",
+                "repeat_mode, repeat_interval, repeat_end_time, target_x, target_y, target_w, target_h, sort_order) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, (SELECT IFNULL(MAX(sort_order),0)+1 FROM tasks))",
                 (name, int(enabled), run_time, executable, arguments, python_venv, int(skip_holiday),
-                 repeat_mode, repeat_interval, repeat_end_time),
+                 repeat_mode, repeat_interval, repeat_end_time,
+                 target_x, target_y, target_w, target_h),
             )
         conn.commit()
     finally:
@@ -454,7 +464,7 @@ class PCEditDialog(tk.Toplevel):
         self.ent_end.insert(0, "00:00")
 
         # 휴장일 제외
-        self.var_skip_holiday = tk.BooleanVar(value=True)
+        self.var_skip_holiday = tk.BooleanVar(value=False)
         ttk.Checkbutton(frame, text="휴장일 제외", variable=self.var_skip_holiday).grid(
             row=6, column=0, columnspan=3, sticky=tk.W, pady=3
         )
@@ -514,11 +524,11 @@ class PCEditDialog(tk.Toplevel):
 # ═══════════════════════════════════════════════════════════
 class TaskEditDialog(tk.Toplevel):
     _REPEAT_MODES = {
-        "매일 1회": "once", "N분 간격": "minutes", "N시간 간격": "hours",
+        "매일 1회": "once", "부팅시 1회": "boot", "N분 간격": "minutes", "N시간 간격": "hours",
         "요일 지정": "weekly", "매월 지정일": "monthly",
     }
     _REPEAT_LABELS = {
-        "once": "매일 1회", "minutes": "N분 간격", "hours": "N시간 간격",
+        "once": "매일 1회", "boot": "부팅시 1회", "minutes": "N분 간격", "hours": "N시간 간격",
         "weekly": "요일 지정", "monthly": "매월 지정일",
     }
     _WEEKDAY_NAMES = ["월", "화", "수", "목", "금", "토", "일"]
@@ -608,7 +618,10 @@ class TaskEditDialog(tk.Toplevel):
         ttk.Label(frame, text="실행 파일:").grid(row=6, column=0, sticky=tk.W, pady=3)
         self.ent_exe = ttk.Entry(frame, width=35)
         self.ent_exe.grid(row=6, column=1, pady=3, padx=(5, 0))
-        ttk.Button(frame, text="..", width=3, command=self._browse_exe).grid(row=6, column=2, padx=2)
+        exe_btn_frame = ttk.Frame(frame)
+        exe_btn_frame.grid(row=6, column=2, padx=2)
+        ttk.Button(exe_btn_frame, text="..", width=3, command=self._browse_exe).pack(side=tk.LEFT)
+        ttk.Button(exe_btn_frame, text="폴더", width=4, command=self._browse_folder).pack(side=tk.LEFT, padx=(2, 0))
 
         # 파라미터
         ttk.Label(frame, text="파라미터:").grid(row=7, column=0, sticky=tk.W, pady=3)
@@ -625,10 +638,33 @@ class TaskEditDialog(tk.Toplevel):
         )
 
         # 휴장일 제외
-        self.var_skip_holiday = tk.BooleanVar(value=True)
+        self.var_skip_holiday = tk.BooleanVar(value=False)
         ttk.Checkbutton(frame, text="휴장일 제외", variable=self.var_skip_holiday).grid(
             row=10, column=0, columnspan=3, sticky=tk.W, pady=3
         )
+
+        # 창 위치 (폴더 열기 시 탐색기 창 위치 지정)
+        self.lbl_pos = ttk.Label(frame, text="창 위치:")
+        self.lbl_pos.grid(row=11, column=0, sticky=tk.W, pady=3)
+        pos_frame = ttk.Frame(frame)
+        pos_frame.grid(row=11, column=1, columnspan=2, sticky=tk.W, padx=(5, 0), pady=3)
+        self.pos_frame = pos_frame
+        ttk.Label(pos_frame, text="X").pack(side=tk.LEFT)
+        self.var_tx = tk.IntVar(value=0)
+        ttk.Entry(pos_frame, textvariable=self.var_tx, width=6).pack(side=tk.LEFT, padx=(2, 5))
+        ttk.Label(pos_frame, text="Y").pack(side=tk.LEFT)
+        self.var_ty = tk.IntVar(value=0)
+        ttk.Entry(pos_frame, textvariable=self.var_ty, width=6).pack(side=tk.LEFT, padx=(2, 5))
+        ttk.Label(pos_frame, text="W").pack(side=tk.LEFT)
+        self.var_tw = tk.IntVar(value=0)
+        ttk.Entry(pos_frame, textvariable=self.var_tw, width=6).pack(side=tk.LEFT, padx=(2, 5))
+        ttk.Label(pos_frame, text="H").pack(side=tk.LEFT)
+        self.var_th = tk.IntVar(value=0)
+        ttk.Entry(pos_frame, textvariable=self.var_th, width=6).pack(side=tk.LEFT, padx=(2, 5))
+        self.btn_capture_pos = ttk.Button(pos_frame, text="위치 캡처", command=self._capture_folder_pos)
+        self.btn_capture_pos.pack(side=tk.LEFT, padx=(5, 0))
+        self.lbl_pos_hint = ttk.Label(frame, text="(폴더를 열어 원하는 위치에 놓은 뒤 캡처, 0=지정 안 함)", foreground="gray")
+        self.lbl_pos_hint.grid(row=12, column=0, columnspan=3, sticky=tk.W)
 
         # 기존 데이터 채우기
         if task:
@@ -654,11 +690,19 @@ class TaskEditDialog(tk.Toplevel):
                 self.var_interval.set(interval_val if interval_val > 0 else 30)
             self.ent_end_time.delete(0, tk.END)
             self.ent_end_time.insert(0, _to_hm(task.get("repeat_end_time", "23:59") or "23:59"))
+            # 위치 복원
+            self.var_tx.set(task.get("target_x", 0) or 0)
+            self.var_ty.set(task.get("target_y", 0) or 0)
+            self.var_tw.set(task.get("target_w", 0) or 0)
+            self.var_th.set(task.get("target_h", 0) or 0)
 
         self._on_mode_changed()
+        self._update_pos_visibility()
+        # 실행파일 변경 시 위치 필드 표시/숨김 업데이트
+        self.ent_exe.bind("<FocusOut>", lambda e: self._update_pos_visibility())
 
         btn_frame = ttk.Frame(frame)
-        btn_frame.grid(row=11, column=0, columnspan=3, pady=(10, 0))
+        btn_frame.grid(row=13, column=0, columnspan=3, pady=(10, 0))
         ttk.Button(btn_frame, text="확인", command=self._on_ok).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="취소", command=self.destroy).pack(side=tk.LEFT, padx=5)
 
@@ -691,7 +735,12 @@ class TaskEditDialog(tk.Toplevel):
         self.lbl_end_time.grid_remove()
         self.ent_end_time.grid_remove()
 
-        if mode in ("minutes", "hours"):
+        if mode == "boot":
+            self.lbl_time.grid_remove()
+            self.ent_time.grid_remove()
+        elif mode in ("minutes", "hours"):
+            self.lbl_time.grid()
+            self.ent_time.grid()
             self.lbl_interval.grid()
             self.interval_frame.grid()
             self.lbl_end_time.grid()
@@ -699,15 +748,33 @@ class TaskEditDialog(tk.Toplevel):
             self.lbl_time.config(text="시작 시간:")
             self.lbl_interval_unit.config(text="분" if mode == "minutes" else "시간")
         elif mode == "weekly":
+            self.lbl_time.grid()
+            self.ent_time.grid()
             self.lbl_weekdays.grid()
             self.weekday_frame.grid()
             self.lbl_time.config(text="실행 시간:")
         elif mode == "monthly":
+            self.lbl_time.grid()
+            self.ent_time.grid()
             self.lbl_monthday.grid()
             self.monthday_frame.grid()
             self.lbl_time.config(text="실행 시간:")
         else:
+            self.lbl_time.grid()
+            self.ent_time.grid()
             self.lbl_time.config(text="실행 시간:")
+
+    def _update_pos_visibility(self):
+        """폴더일 때만 창 위치 필드 표시"""
+        exe = self.ent_exe.get().strip()
+        if os.path.isdir(exe):
+            self.lbl_pos.grid()
+            self.pos_frame.grid()
+            self.lbl_pos_hint.grid()
+        else:
+            self.lbl_pos.grid_remove()
+            self.pos_frame.grid_remove()
+            self.lbl_pos_hint.grid_remove()
 
     def _browse_exe(self):
         path = filedialog.askopenfilename(
@@ -718,6 +785,62 @@ class TaskEditDialog(tk.Toplevel):
         if path:
             self.ent_exe.delete(0, tk.END)
             self.ent_exe.insert(0, path)
+            self._update_pos_visibility()
+
+    def _browse_folder(self):
+        path = filedialog.askdirectory(title="폴더 선택", parent=self)
+        if path:
+            self.ent_exe.delete(0, tk.END)
+            self.ent_exe.insert(0, path)
+            self._update_pos_visibility()
+
+    def _capture_folder_pos(self):
+        """열려 있는 탐색기 창의 위치/크기를 캡처"""
+        exe_path = self.ent_exe.get().strip()
+        if not exe_path or not os.path.isdir(exe_path):
+            messagebox.showwarning("알림", "먼저 폴더를 선택하세요.", parent=self)
+            return
+        folder_name = os.path.basename(exe_path.rstrip("\\/"))
+        target_hwnd = None
+
+        def enum_callback(hwnd, lParam):
+            nonlocal target_hwnd
+            if not ctypes.windll.user32.IsWindowVisible(hwnd):
+                return True
+            length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+            if length == 0:
+                return True
+            buf = ctypes.create_unicode_buffer(length + 1)
+            ctypes.windll.user32.GetWindowTextW(hwnd, buf, length + 1)
+            if buf.value == folder_name:
+                pid = ctypes.wintypes.DWORD()
+                ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid.value)
+                if handle:
+                    try:
+                        pbuf = ctypes.create_unicode_buffer(260)
+                        size = ctypes.wintypes.DWORD(260)
+                        if ctypes.windll.kernel32.QueryFullProcessImageNameW(handle, 0, pbuf, ctypes.byref(size)):
+                            if os.path.basename(pbuf.value).lower() == "explorer.exe":
+                                target_hwnd = hwnd
+                                return False
+                    finally:
+                        ctypes.windll.kernel32.CloseHandle(handle)
+            return True
+
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+        ctypes.windll.user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
+
+        if not target_hwnd:
+            messagebox.showinfo("알림", f"'{folder_name}' 탐색기 창을 찾을 수 없습니다.\n폴더를 먼저 열어주세요.", parent=self)
+            return
+
+        rect = ctypes.wintypes.RECT()
+        ctypes.windll.user32.GetWindowRect(target_hwnd, ctypes.byref(rect))
+        self.var_tx.set(rect.left)
+        self.var_ty.set(rect.top)
+        self.var_tw.set(rect.right - rect.left)
+        self.var_th.set(rect.bottom - rect.top)
 
     def _browse_venv(self):
         path = filedialog.askopenfilename(
@@ -768,6 +891,10 @@ class TaskEditDialog(tk.Toplevel):
             "repeat_mode": repeat_mode,
             "repeat_interval": repeat_interval,
             "repeat_end_time": self.ent_end_time.get().strip() if repeat_mode in ("minutes", "hours") else "23:59",
+            "target_x": self.var_tx.get(),
+            "target_y": self.var_ty.get(),
+            "target_w": self.var_tw.get(),
+            "target_h": self.var_th.get(),
         }
         self.destroy()
 
@@ -1011,6 +1138,8 @@ class AutoExecApp:
         self._tick()
         # 트레이 아이콘은 mainloop 진입 후 생성 (윈도우 준비 완료 후)
         self.root.after(500, self._setup_tray)
+        # 부팅시 1회 실행 태스크 처리
+        self.root.after(1000, self._run_boot_tasks)
 
     # ─── UI 구성 ──────────────────────────────────────────
     def _build_ui(self):
@@ -1312,22 +1441,28 @@ class AutoExecApp:
             self.task_tree.delete(item)
         for task in self.task_data:
             enabled_mark = "O" if task["enabled"] else ""
-            exe_display = os.path.basename(task["executable"])
-            if task["python_venv"]:
+            is_folder = os.path.isdir(task["executable"])
+            exe_display = os.path.basename(task["executable"]) if not is_folder else task["executable"]
+            if not is_folder and task["python_venv"]:
                 exe_display += " (venv)"
-            # 시간 표시: 반복 모드일 경우 간격 정보 포함
+            # 시간 표시
             repeat_mode = task.get("repeat_mode", "once")
-            time_display = _to_hm(task["run_time"])
-            interval_val = task.get("repeat_interval", 0) or 0
-            if repeat_mode == "minutes":
-                time_display += f" ({interval_val}분)"
-            elif repeat_mode == "hours":
-                time_display += f" ({interval_val}시간)"
-            elif repeat_mode == "weekly":
-                days = [n for i, n in enumerate(["월","화","수","목","금","토","일"]) if interval_val & (1 << i)]
-                time_display += f" ({','.join(days)})"
-            elif repeat_mode == "monthly":
-                time_display += f" (매월 {interval_val}일)"
+            if repeat_mode == "boot":
+                time_display = "부팅시" if not is_folder else "부팅시 폴더"
+            elif is_folder:
+                time_display = "폴더"
+            else:
+                time_display = _to_hm(task["run_time"])
+                interval_val = task.get("repeat_interval", 0) or 0
+                if repeat_mode == "minutes":
+                    time_display += f" ({interval_val}분)"
+                elif repeat_mode == "hours":
+                    time_display += f" ({interval_val}시간)"
+                elif repeat_mode == "weekly":
+                    days = [n for i, n in enumerate(["월","화","수","목","금","토","일"]) if interval_val & (1 << i)]
+                    time_display += f" ({','.join(days)})"
+                elif repeat_mode == "monthly":
+                    time_display += f" (매월 {interval_val}일)"
             self.task_tree.insert("", tk.END, iid=str(task["id"]),
                                   values=(enabled_mark, task["name"], time_display, exe_display))
 
@@ -1348,12 +1483,13 @@ class AutoExecApp:
         if dlg.result:
             r = dlg.result
             db_upsert_task(None, r["name"], r["enabled"], r["run_time"], r["executable"], r["arguments"],
-                           r["python_venv"], r["skip_holiday"], r["repeat_mode"], r["repeat_interval"], r["repeat_end_time"])
+                           r["python_venv"], r["skip_holiday"], r["repeat_mode"], r["repeat_interval"], r["repeat_end_time"],
+                           r.get("target_x", 0), r.get("target_y", 0), r.get("target_w", 0), r.get("target_h", 0))
             self._refresh_task_list()
             self.log(f"자동실행 추가: {r['name']}")
 
     def _on_task_double_click(self, event):
-        """더블클릭: 자동실행 사용 → 편집, 아닌 경우 → 실행"""
+        """더블클릭: 폴더 → 열기, 자동실행 사용 → 편집, 아닌 경우 → 실행"""
         item = self.task_tree.identify_row(event.y)
         if not item:
             return
@@ -1361,7 +1497,9 @@ class AutoExecApp:
         task = next((t for t in self.task_data if t["id"] == task_id), None)
         if not task:
             return
-        if task["enabled"]:
+        if os.path.isdir(task["executable"]):
+            self._open_folder_task(task)
+        elif task["enabled"]:
             self._edit_task()
         else:
             self._run_task()
@@ -1375,7 +1513,8 @@ class AutoExecApp:
         if dlg.result:
             r = dlg.result
             db_upsert_task(r["id"], r["name"], r["enabled"], r["run_time"], r["executable"], r["arguments"],
-                           r["python_venv"], r["skip_holiday"], r["repeat_mode"], r["repeat_interval"], r["repeat_end_time"])
+                           r["python_venv"], r["skip_holiday"], r["repeat_mode"], r["repeat_interval"], r["repeat_end_time"],
+                           r.get("target_x", 0), r.get("target_y", 0), r.get("target_w", 0), r.get("target_h", 0))
             self._refresh_task_list()
             self.log(f"자동실행 수정: {r['name']}")
 
@@ -1408,6 +1547,25 @@ class AutoExecApp:
         if self.task_tree.exists(new_iid):
             self.task_tree.selection_set(new_iid)
             self.task_tree.see(new_iid)
+
+    def _open_folder_task(self, task):
+        """폴더 태스크를 열고 위치 지정이 있으면 이동"""
+        executable = task["executable"]
+        tx = task.get("target_x", 0) or 0
+        ty = task.get("target_y", 0) or 0
+        tw = task.get("target_w", 0) or 0
+        th = task.get("target_h", 0) or 0
+        has_pos = tx or ty or tw or th
+
+        subprocess.Popen(["explorer.exe", executable])
+        self.log(f"[폴더] {task['name']} 열기: {executable}")
+
+        if has_pos:
+            folder_name = os.path.basename(executable.rstrip("\\/"))
+            def _move():
+                time.sleep(1.5)
+                self._move_explorer_window(folder_name, tx, ty, tw, th)
+            threading.Thread(target=_move, daemon=True).start()
 
     def _open_startup_folder(self):
         """윈도우 시작프로그램 폴더 열기"""
@@ -1564,6 +1722,54 @@ class AutoExecApp:
 
         threading.Thread(target=_do_move, daemon=True).start()
 
+    def _move_explorer_window(self, folder_name, tx, ty, tw, th):
+        """폴더명으로 탐색기 창을 찾아 지정 위치로 이동"""
+        target_hwnd = None
+
+        def enum_callback(hwnd, lParam):
+            nonlocal target_hwnd
+            if not ctypes.windll.user32.IsWindowVisible(hwnd):
+                return True
+            length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+            if length == 0:
+                return True
+            buf = ctypes.create_unicode_buffer(length + 1)
+            ctypes.windll.user32.GetWindowTextW(hwnd, buf, length + 1)
+            if buf.value == folder_name:
+                # explorer.exe 프로세스인지 확인
+                pid = ctypes.wintypes.DWORD()
+                ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid.value)
+                if handle:
+                    try:
+                        pbuf = ctypes.create_unicode_buffer(260)
+                        size = ctypes.wintypes.DWORD(260)
+                        if ctypes.windll.kernel32.QueryFullProcessImageNameW(handle, 0, pbuf, ctypes.byref(size)):
+                            if os.path.basename(pbuf.value).lower() == "explorer.exe":
+                                target_hwnd = hwnd
+                                return False
+                    finally:
+                        ctypes.windll.kernel32.CloseHandle(handle)
+            return True
+
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+        ctypes.windll.user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
+
+        if target_hwnd:
+            ctypes.windll.user32.ShowWindow(target_hwnd, 9)  # SW_RESTORE
+            time.sleep(0.1)
+            if tw > 0 and th > 0:
+                ctypes.windll.user32.SetWindowPos(target_hwnd, 0, tx, ty, tw, th, 0x0004)
+            else:
+                rect = ctypes.wintypes.RECT()
+                ctypes.windll.user32.GetWindowRect(target_hwnd, ctypes.byref(rect))
+                cw = rect.right - rect.left
+                ch = rect.bottom - rect.top
+                ctypes.windll.user32.SetWindowPos(target_hwnd, 0, tx, ty, cw, ch, 0x0004)
+            self.log(f"[폴더] {folder_name} 창 위치 이동: ({tx},{ty} {tw}x{th})")
+        else:
+            self.log(f"[폴더] {folder_name} 창을 찾지 못함")
+
     def _find_windows_by_exe(self, exe_name_lower):
         """특정 프로세스명의 창 핸들 목록 반환"""
         hwnds = []
@@ -1647,9 +1853,12 @@ class AutoExecApp:
         self.git_url_entry.focus_set()
 
     def _run_task(self):
-        """선택한 자동실행 작업을 즉시 테스트 실행"""
+        """선택한 자동실행 작업을 즉시 테스트 실행 (폴더면 열기)"""
         task = self._get_selected_task()
         if not task:
+            return
+        if os.path.isdir(task["executable"]):
+            self._open_folder_task(task)
             return
         repeat_mode = task.get("repeat_mode", "once")
         if repeat_mode == "once":
@@ -1759,6 +1968,22 @@ class AutoExecApp:
                 )
                 t.start()
 
+    def _run_boot_tasks(self):
+        """부팅시 1회 실행 태스크 처리 (앱 시작 시 호출)"""
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        for task in self.task_data:
+            if not task["enabled"]:
+                continue
+            if task.get("repeat_mode") != "boot":
+                continue
+            # 오늘 이미 실행했으면 건너뜀
+            if str(task.get("last_run", ""))[:10] == today_str:
+                continue
+            if task["skip_holiday"] and self._is_closed_day(datetime.now()):
+                continue
+            task["last_run"] = today_str
+            self._execute_task(task, today_str)
+
     def _check_auto_tasks(self, current_hm, today_str, is_closed):
         """자동실행 체크 (매일 1회 + 반복 모드 지원)"""
         now = datetime.now()
@@ -1838,8 +2063,15 @@ class AutoExecApp:
                 self._execute_task(task, now_dt_str)
 
     def _execute_task(self, task, today_str):
-        """자동실행 작업 실행 (별도 프로세스)"""
+        """자동실행 작업 실행 (별도 프로세스, 폴더는 탐색기로 열기)"""
         task_id = task["id"]
+        executable = task["executable"]
+
+        # 폴더인 경우 탐색기로 열기
+        if os.path.isdir(executable):
+            self._open_folder_task(task)
+            db_update_task_last_run(task_id, today_str)
+            return
 
         # 중복 실행 방지: 이미 실행중인 작업이면 무시
         if task_id in self._running_tasks:
@@ -1848,7 +2080,6 @@ class AutoExecApp:
 
         self._running_tasks.add(task_id)
 
-        executable = task["executable"]
         arguments = task.get("arguments", "")
         python_venv = task["python_venv"]
 
