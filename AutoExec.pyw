@@ -819,6 +819,22 @@ class TaskEditDialog(tk.Toplevel):
             self.ent_exe.delete(0, tk.END)
             self.ent_exe.insert(0, path)
             self._update_pos_visibility()
+            self._auto_fill_python_path(path)
+
+    def _auto_fill_python_path(self, exe_path):
+        """Python 스크립트 선택 시 Python 경로 자동 입력"""
+        if self.ent_venv.get().strip():
+            return  # 이미 지정되어 있으면 건드리지 않음
+        ext = os.path.splitext(exe_path)[1].lower()
+        if ext == ".pyw":
+            python_path = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+        elif ext == ".py":
+            python_path = os.path.join(os.path.dirname(sys.executable), "python.exe")
+        else:
+            return
+        if os.path.isfile(python_path):
+            self.ent_venv.delete(0, tk.END)
+            self.ent_venv.insert(0, python_path)
 
     def _browse_folder(self):
         path = filedialog.askdirectory(title="폴더 선택", parent=self)
@@ -2076,8 +2092,10 @@ class AutoExecApp:
                 ext = os.path.splitext(executable)[1].lower()
                 if ext in (".py", ".pyw") and python_venv:
                     cmd = [python_venv, executable]
-                elif ext in (".py", ".pyw"):
-                    # .pyw 호스트의 sys.executable은 pythonw.exe → python.exe로 대체
+                elif ext == ".pyw":
+                    python_exe = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+                    cmd = [python_exe, executable]
+                elif ext == ".py":
                     python_exe = os.path.join(os.path.dirname(sys.executable), "python.exe")
                     cmd = [python_exe, executable]
                 else:
