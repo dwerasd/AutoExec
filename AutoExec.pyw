@@ -103,6 +103,11 @@ def db_init():
         cur.execute("ALTER TABLE move_targets ADD COLUMN maximize INTEGER NOT NULL DEFAULT 1")
     except Exception:
         pass
+    # tasks 테이블에 auto_move 필드 추가
+    try:
+        cur.execute("ALTER TABLE tasks ADD COLUMN auto_move INTEGER NOT NULL DEFAULT 0")
+    except Exception:
+        pass
     # tasks 테이블에 위치 필드 추가 (폴더 창 위치 지정용)
     for col, default in [("target_x", 0), ("target_y", 0), ("target_w", 0), ("target_h", 0)]:
         try:
@@ -205,7 +210,7 @@ def db_fetch_tasks():
 
 def db_upsert_task(task_id, name, enabled, run_time, executable, arguments, python_venv, skip_holiday,
                    repeat_mode="once", repeat_interval=0, repeat_end_time="23:59",
-                   target_x=0, target_y=0, target_w=0, target_h=0):
+                   target_x=0, target_y=0, target_w=0, target_h=0, auto_move=0):
     """자동실행 추가 또는 수정"""
     conn = get_db_connection()
     try:
@@ -215,19 +220,19 @@ def db_upsert_task(task_id, name, enabled, run_time, executable, arguments, pyth
                 "UPDATE tasks SET name=?, enabled=?, run_time=?, executable=?, "
                 "arguments=?, python_venv=?, skip_holiday=?, "
                 "repeat_mode=?, repeat_interval=?, repeat_end_time=?, "
-                "target_x=?, target_y=?, target_w=?, target_h=? WHERE id=?",
+                "target_x=?, target_y=?, target_w=?, target_h=?, auto_move=? WHERE id=?",
                 (name, int(enabled), run_time, executable, arguments, python_venv, int(skip_holiday),
                  repeat_mode, repeat_interval, repeat_end_time,
-                 target_x, target_y, target_w, target_h, task_id),
+                 target_x, target_y, target_w, target_h, int(auto_move), task_id),
             )
         else:
             cur.execute(
                 "INSERT INTO tasks (name, enabled, run_time, executable, arguments, python_venv, skip_holiday, "
-                "repeat_mode, repeat_interval, repeat_end_time, target_x, target_y, target_w, target_h, sort_order) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, (SELECT IFNULL(MAX(sort_order),0)+1 FROM tasks))",
+                "repeat_mode, repeat_interval, repeat_end_time, target_x, target_y, target_w, target_h, auto_move, sort_order) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, (SELECT IFNULL(MAX(sort_order),0)+1 FROM tasks))",
                 (name, int(enabled), run_time, executable, arguments, python_venv, int(skip_holiday),
                  repeat_mode, repeat_interval, repeat_end_time,
-                 target_x, target_y, target_w, target_h),
+                 target_x, target_y, target_w, target_h, int(auto_move)),
             )
         conn.commit()
     finally:
@@ -369,6 +374,82 @@ def _find_explorer_window_by_title(folder_name):
         if title == folder_name or title.startswith(folder_name + " -"):
             result[0] = hwnd
             return False
+        return True
+
+    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+    ctypes.windll.user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
+    return result[0]
+
+
+def _get_process_cmdline(pid):
+    """NtQueryInformationProcess로 프로세스 커맨드라인을 읽어 반환 (Win32 API 직접 호출, <0.1ms)"""
+    kernel32 = ctypes.windll.kernel32
+    ntdll = ctypes.windll.ntdll
+    kernel32.ReadProcessMemory.argtypes = [
+        ctypes.wintypes.HANDLE, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)
+    ]
+    kernel32.ReadProcessMemory.restype = ctypes.wintypes.BOOL
+
+    class PBI(ctypes.Structure):
+        _fields_ = [("R1", ctypes.c_void_p), ("PebBaseAddress", ctypes.c_void_p),
+                     ("R2", ctypes.c_void_p * 2), ("UniqueProcessId", ctypes.c_void_p), ("R3", ctypes.c_void_p)]
+
+    class US(ctypes.Structure):
+        _fields_ = [("Length", ctypes.c_ushort), ("MaxLength", ctypes.c_ushort),
+                     ("_pad", ctypes.c_uint), ("Buffer", ctypes.c_void_p)]
+
+    h = kernel32.OpenProcess(0x0400 | 0x0010, False, pid)  # QUERY_INFORMATION | VM_READ
+    if not h:
+        return None
+    try:
+        pbi = PBI()
+        ret = ctypes.c_ulong()
+        if ntdll.NtQueryInformationProcess(h, 0, ctypes.byref(pbi), ctypes.sizeof(pbi), ctypes.byref(ret)) != 0:
+            return None
+        rd = ctypes.c_size_t()
+        pp = ctypes.c_void_p()
+        kernel32.ReadProcessMemory(h, pbi.PebBaseAddress + 0x20, ctypes.byref(pp), ctypes.sizeof(pp), ctypes.byref(rd))
+        us = US()
+        kernel32.ReadProcessMemory(h, pp.value + 0x70, ctypes.byref(us), ctypes.sizeof(us), ctypes.byref(rd))
+        buf = ctypes.create_unicode_buffer(us.Length // 2 + 1)
+        kernel32.ReadProcessMemory(h, us.Buffer, buf, us.Length, ctypes.byref(rd))
+        return buf.value
+    except Exception:
+        return None
+    finally:
+        kernel32.CloseHandle(h)
+
+
+def _find_window_by_exe_name(exe_name_lower):
+    """exe 파일명(소문자)으로 보이는 창 핸들 반환. .py/.pyw는 커맨드라인 매칭."""
+    result = [None]
+    is_python_script = exe_name_lower.endswith((".py", ".pyw"))
+
+    def enum_callback(hwnd, lParam):
+        if not ctypes.windll.user32.IsWindowVisible(hwnd):
+            return True
+        if ctypes.windll.user32.GetWindowTextLengthW(hwnd) == 0:
+            return True
+        pid = ctypes.wintypes.DWORD()
+        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid.value)
+        if handle:
+            try:
+                buf = ctypes.create_unicode_buffer(260)
+                size = ctypes.wintypes.DWORD(260)
+                if ctypes.windll.kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                    proc_exe = os.path.basename(buf.value).lower()
+                    if proc_exe == exe_name_lower:
+                        result[0] = hwnd
+                        return False
+                    # python.exe/pythonw.exe가 실행한 스크립트인지 커맨드라인으로 확인
+                    if is_python_script and proc_exe in ("python.exe", "pythonw.exe"):
+                        cmdline = _get_process_cmdline(pid.value)
+                        if cmdline and exe_name_lower in cmdline.lower():
+                            result[0] = hwnd
+                            return False
+            finally:
+                ctypes.windll.kernel32.CloseHandle(handle)
         return True
 
     WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
@@ -683,28 +764,40 @@ class TaskEditDialog(tk.Toplevel):
             row=10, column=0, columnspan=3, sticky=tk.W, pady=3
         )
 
+        # 창위치 자동이동 체크박스
+        self.var_auto_move = tk.BooleanVar(value=False)
+        self.chk_auto_move = ttk.Checkbutton(
+            frame, text="창위치 자동이동", variable=self.var_auto_move,
+            command=self._on_auto_move_toggled
+        )
+        self.chk_auto_move.grid(row=11, column=0, columnspan=3, sticky=tk.W, pady=3)
+
         # 창 위치 (폴더 열기 시 탐색기 창 위치 지정)
         self.lbl_pos = ttk.Label(frame, text="창 위치:")
-        self.lbl_pos.grid(row=11, column=0, sticky=tk.W, pady=3)
+        self.lbl_pos.grid(row=12, column=0, sticky=tk.W, pady=3)
         pos_frame = ttk.Frame(frame)
-        pos_frame.grid(row=11, column=1, columnspan=2, sticky=tk.W, padx=(5, 0), pady=3)
+        pos_frame.grid(row=12, column=1, columnspan=2, sticky=tk.W, padx=(5, 0), pady=3)
         self.pos_frame = pos_frame
         ttk.Label(pos_frame, text="X").pack(side=tk.LEFT)
         self.var_tx = tk.IntVar(value=0)
-        ttk.Entry(pos_frame, textvariable=self.var_tx, width=6).pack(side=tk.LEFT, padx=(2, 5))
+        self.ent_tx = ttk.Entry(pos_frame, textvariable=self.var_tx, width=6)
+        self.ent_tx.pack(side=tk.LEFT, padx=(2, 5))
         ttk.Label(pos_frame, text="Y").pack(side=tk.LEFT)
         self.var_ty = tk.IntVar(value=0)
-        ttk.Entry(pos_frame, textvariable=self.var_ty, width=6).pack(side=tk.LEFT, padx=(2, 5))
+        self.ent_ty = ttk.Entry(pos_frame, textvariable=self.var_ty, width=6)
+        self.ent_ty.pack(side=tk.LEFT, padx=(2, 5))
         ttk.Label(pos_frame, text="W").pack(side=tk.LEFT)
         self.var_tw = tk.IntVar(value=0)
-        ttk.Entry(pos_frame, textvariable=self.var_tw, width=6).pack(side=tk.LEFT, padx=(2, 5))
+        self.ent_tw = ttk.Entry(pos_frame, textvariable=self.var_tw, width=6)
+        self.ent_tw.pack(side=tk.LEFT, padx=(2, 5))
         ttk.Label(pos_frame, text="H").pack(side=tk.LEFT)
         self.var_th = tk.IntVar(value=0)
-        ttk.Entry(pos_frame, textvariable=self.var_th, width=6).pack(side=tk.LEFT, padx=(2, 5))
+        self.ent_th = ttk.Entry(pos_frame, textvariable=self.var_th, width=6)
+        self.ent_th.pack(side=tk.LEFT, padx=(2, 5))
         self.btn_capture_pos = ttk.Button(pos_frame, text="위치 캡처", command=self._capture_folder_pos)
         self.btn_capture_pos.pack(side=tk.LEFT, padx=(5, 0))
         self.lbl_pos_hint = ttk.Label(frame, text="(폴더를 열어 원하는 위치에 놓은 뒤 캡처, 0=지정 안 함)", foreground="gray")
-        self.lbl_pos_hint.grid(row=12, column=0, columnspan=3, sticky=tk.W)
+        self.lbl_pos_hint.grid(row=13, column=0, columnspan=3, sticky=tk.W)
 
         # 기존 데이터 채우기
         if task:
@@ -731,6 +824,7 @@ class TaskEditDialog(tk.Toplevel):
             self.ent_end_time.delete(0, tk.END)
             self.ent_end_time.insert(0, _to_hm(task.get("repeat_end_time", "23:59") or "23:59"))
             # 위치 복원
+            self.var_auto_move.set(bool(task.get("auto_move", 0)))
             self.var_tx.set(task.get("target_x", 0) or 0)
             self.var_ty.set(task.get("target_y", 0) or 0)
             self.var_tw.set(task.get("target_w", 0) or 0)
@@ -738,11 +832,12 @@ class TaskEditDialog(tk.Toplevel):
 
         self._on_mode_changed()
         self._update_pos_visibility()
+        self._on_auto_move_toggled()
         # 실행파일 변경 시 위치 필드 표시/숨김 업데이트
         self.ent_exe.bind("<FocusOut>", lambda e: self._update_pos_visibility())
 
         btn_frame = ttk.Frame(frame)
-        btn_frame.grid(row=13, column=0, columnspan=3, pady=(10, 0))
+        btn_frame.grid(row=14, column=0, columnspan=3, pady=(10, 0))
         ttk.Button(btn_frame, text="확인", command=self._on_ok).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="취소", command=self.destroy).pack(side=tk.LEFT, padx=5)
 
@@ -804,14 +899,32 @@ class TaskEditDialog(tk.Toplevel):
             self.ent_time.grid()
             self.lbl_time.config(text="실행 시간:")
 
+    def _on_auto_move_toggled(self):
+        """창위치 자동이동 체크 시 위치 입력 필드 활성/비활성"""
+        enabled = self.var_auto_move.get()
+        state = "normal" if enabled else "disabled"
+        self.ent_tx.config(state=state)
+        self.ent_ty.config(state=state)
+        self.ent_tw.config(state=state)
+        self.ent_th.config(state=state)
+        self.btn_capture_pos.config(state=state)
+
     def _update_pos_visibility(self):
-        """폴더일 때만 창 위치 필드 표시"""
+        """실행 파일이 지정되어 있으면 창 위치 필드 표시"""
         exe = self.ent_exe.get().strip()
-        if os.path.isdir(exe):
+        is_folder = os.path.isdir(exe)
+        has_exe = bool(exe) and not is_folder
+        if is_folder or has_exe:
+            self.chk_auto_move.grid()
             self.lbl_pos.grid()
             self.pos_frame.grid()
+            if is_folder:
+                self.lbl_pos_hint.config(text="(폴더를 열어 원하는 위치에 놓은 뒤 캡처)")
+            else:
+                self.lbl_pos_hint.config(text="(프로그램을 실행하고 원하는 위치에 놓은 뒤 캡처)")
             self.lbl_pos_hint.grid()
         else:
+            self.chk_auto_move.grid_remove()
             self.lbl_pos.grid_remove()
             self.pos_frame.grid_remove()
             self.lbl_pos_hint.grid_remove()
@@ -851,19 +964,25 @@ class TaskEditDialog(tk.Toplevel):
             self._update_pos_visibility()
 
     def _capture_folder_pos(self):
-        """열려 있는 탐색기 창의 위치/크기를 캡처"""
+        """열려 있는 창의 위치/크기를 캡처 (폴더: 탐색기, 실행파일: exe명으로 검색)"""
         exe_path = self.ent_exe.get().strip()
-        if not exe_path or not os.path.isdir(exe_path):
-            messagebox.showwarning("알림", "먼저 폴더를 선택하세요.", parent=self)
+        if not exe_path:
+            messagebox.showwarning("알림", "먼저 실행 파일 또는 폴더를 선택하세요.", parent=self)
             return
-        folder_name = os.path.basename(exe_path.rstrip("\\/"))
+
         target_hwnd = None
-
-        target_hwnd = _find_explorer_window_by_title(folder_name)
-
-        if not target_hwnd:
-            messagebox.showinfo("알림", f"'{folder_name}' 탐색기 창을 찾을 수 없습니다.\n폴더를 먼저 열어주세요.", parent=self)
-            return
+        if os.path.isdir(exe_path):
+            folder_name = os.path.basename(exe_path.rstrip("\\/"))
+            target_hwnd = _find_explorer_window_by_title(folder_name)
+            if not target_hwnd:
+                messagebox.showinfo("알림", f"'{folder_name}' 탐색기 창을 찾을 수 없습니다.\n폴더를 먼저 열어주세요.", parent=self)
+                return
+        else:
+            exe_name = os.path.basename(exe_path).lower()
+            target_hwnd = _find_window_by_exe_name(exe_name)
+            if not target_hwnd:
+                messagebox.showinfo("알림", f"'{os.path.basename(exe_path)}' 창을 찾을 수 없습니다.\n프로그램을 먼저 실행해주세요.", parent=self)
+                return
 
         rect = ctypes.wintypes.RECT()
         ctypes.windll.user32.GetWindowRect(target_hwnd, ctypes.byref(rect))
@@ -921,6 +1040,7 @@ class TaskEditDialog(tk.Toplevel):
             "repeat_mode": repeat_mode,
             "repeat_interval": repeat_interval,
             "repeat_end_time": self.ent_end_time.get().strip() if repeat_mode in ("minutes", "hours") else "23:59",
+            "auto_move": self.var_auto_move.get(),
             "target_x": self.var_tx.get(),
             "target_y": self.var_ty.get(),
             "target_w": self.var_tw.get(),
@@ -1923,7 +2043,8 @@ class AutoExecApp:
             r = dlg.result
             db_upsert_task(None, r["name"], r["enabled"], r["run_time"], r["executable"], r["arguments"],
                            r["python_venv"], r["skip_holiday"], r["repeat_mode"], r["repeat_interval"], r["repeat_end_time"],
-                           r.get("target_x", 0), r.get("target_y", 0), r.get("target_w", 0), r.get("target_h", 0))
+                           r.get("target_x", 0), r.get("target_y", 0), r.get("target_w", 0), r.get("target_h", 0),
+                           r.get("auto_move", 0))
             self._refresh_task_list()
             self.log(f"자동실행 추가: {r['name']}")
 
@@ -2027,7 +2148,8 @@ class AutoExecApp:
             r = dlg.result
             db_upsert_task(r["id"], r["name"], r["enabled"], r["run_time"], r["executable"], r["arguments"],
                            r["python_venv"], r["skip_holiday"], r["repeat_mode"], r["repeat_interval"], r["repeat_end_time"],
-                           r.get("target_x", 0), r.get("target_y", 0), r.get("target_w", 0), r.get("target_h", 0))
+                           r.get("target_x", 0), r.get("target_y", 0), r.get("target_w", 0), r.get("target_h", 0),
+                           r.get("auto_move", 0))
             self._refresh_task_list()
             self.log(f"자동실행 수정: {r['name']}")
 
@@ -2062,24 +2184,25 @@ class AutoExecApp:
             self.task_tree.see(new_iid)
 
     def _open_folder_task(self, task):
-        """폴더 태스크를 열고 위치 지정이 있으면 이동"""
+        """폴더 태스크를 열고 auto_move가 켜져 있고 위치 지정이 있으면 이동"""
         executable = task["executable"]
         folder_path = os.path.normpath(executable)  # 포워드 슬래시 → 백슬래시 변환
-        tx = task.get("target_x", 0) or 0
-        ty = task.get("target_y", 0) or 0
-        tw = task.get("target_w", 0) or 0
-        th = task.get("target_h", 0) or 0
-        has_pos = tx or ty or tw or th
 
         subprocess.Popen(["explorer.exe", folder_path])
         self.log(f"[폴더] {task['name']} 열기: {folder_path}")
 
-        if has_pos:
-            folder_name = os.path.basename(folder_path)
-            def _move():
-                time.sleep(1.5)
-                self._move_explorer_window(folder_name, tx, ty, tw, th)
-            threading.Thread(target=_move, daemon=True).start()
+        if task.get("auto_move", 0):
+            tx = task.get("target_x", 0) or 0
+            ty = task.get("target_y", 0) or 0
+            tw = task.get("target_w", 0) or 0
+            th = task.get("target_h", 0) or 0
+            has_pos = tx or ty or tw or th
+            if has_pos:
+                folder_name = os.path.basename(folder_path)
+                def _move():
+                    time.sleep(1.5)
+                    self._move_explorer_window(folder_name, tx, ty, tw, th)
+                threading.Thread(target=_move, daemon=True).start()
 
     def _open_startup_folder(self):
         """윈도우 시작프로그램 폴더 열기"""
@@ -2272,29 +2395,60 @@ class AutoExecApp:
         else:
             self.log(f"[폴더] {folder_name} 창을 찾지 못함")
 
+    def _wait_and_move_exe_window(self, pid, executable, tx, ty, tw, th):
+        """프로세스 창이 나타날 때까지 대기한 뒤 위치 이동"""
+        exe_name = os.path.basename(executable).lower()
+        user32 = ctypes.windll.user32
+        SWP_NOZORDER = 0x0004
+
+        for _ in range(20):  # 최대 10초 대기 (0.5초 × 20)
+            time.sleep(0.5)
+            hwnd = _find_window_by_exe_name(exe_name)
+            if hwnd:
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                time.sleep(0.1)
+                if tw > 0 and th > 0:
+                    user32.SetWindowPos(hwnd, 0, tx, ty, tw, th, SWP_NOZORDER)
+                else:
+                    rect = ctypes.wintypes.RECT()
+                    user32.GetWindowRect(hwnd, ctypes.byref(rect))
+                    user32.SetWindowPos(hwnd, 0, tx, ty, rect.right - rect.left, rect.bottom - rect.top, SWP_NOZORDER)
+                self.log(f"[자동실행] {os.path.basename(executable)} 창 위치 이동: ({tx},{ty} {tw}x{th})")
+                return
+        self.log(f"[자동실행] {os.path.basename(executable)} 창을 찾지 못함 (위치 이동 실패)")
+
     @staticmethod
     def _find_pids_by_script(script_name_lower):
-        """Python 스크립트를 실행중인 프로세스 PID set 반환 (wmic 사용)"""
+        """Python 스크립트를 실행중인 프로세스 PID set 반환 (Win32 API 직접 호출)"""
+        pids = set()
         try:
+            # python/pythonw 프로세스를 tasklist로 빠르게 찾기
             result = subprocess.run(
-                ["wmic", "process", "where",
-                 "name='python.exe' or name='pythonw.exe'",
-                 "get", "ProcessId,CommandLine", "/format:csv"],
+                ["tasklist", "/fi", "imagename eq pythonw.exe", "/fo", "csv", "/nh"],
                 capture_output=True, text=True, timeout=5,
-                creationflags=0x08000000,  # CREATE_NO_WINDOW
+                creationflags=0x08000000,
             )
-            pids = set()
-            for line in result.stdout.splitlines():
-                if script_name_lower in line.lower():
-                    parts = line.strip().split(",")
-                    if len(parts) >= 2:
-                        try:
-                            pids.add(int(parts[-1]))
-                        except ValueError:
-                            pass
-            return pids
+            result2 = subprocess.run(
+                ["tasklist", "/fi", "imagename eq python.exe", "/fo", "csv", "/nh"],
+                capture_output=True, text=True, timeout=5,
+                creationflags=0x08000000,
+            )
+            candidate_pids = set()
+            for line in (result.stdout + result2.stdout).splitlines():
+                parts = line.strip().strip('"').split('","')
+                if len(parts) >= 2:
+                    try:
+                        candidate_pids.add(int(parts[1]))
+                    except ValueError:
+                        pass
+            # 각 PID의 커맨드라인을 Win32 API로 확인
+            for pid in candidate_pids:
+                cmdline = _get_process_cmdline(pid)
+                if cmdline and script_name_lower in cmdline.lower():
+                    pids.add(pid)
         except Exception:
-            return set()
+            pass
+        return pids
 
     def _find_windows_by_exe(self, exe_name_lower):
         """특정 프로세스명의 창 핸들 목록 반환 (.py/.pyw는 커맨드라인으로 매칭)"""
@@ -2739,6 +2893,14 @@ class AutoExecApp:
                 )
                 self._task_processes[task_id] = proc
                 db_update_task_last_run(task["id"], today_str)
+                # auto_move가 켜져 있으면 창이 생길 때까지 대기 후 위치 이동
+                if task.get("auto_move", 0):
+                    tx = task.get("target_x", 0) or 0
+                    ty = task.get("target_y", 0) or 0
+                    tw = task.get("target_w", 0) or 0
+                    th = task.get("target_h", 0) or 0
+                    if tx or ty or tw or th:
+                        self._wait_and_move_exe_window(proc.pid, executable, tx, ty, tw, th)
                 # 프로세스 종료 대기 (별도 스레드이므로 메인 루프 차단 없음)
                 exit_code = proc.wait()
                 elapsed = time.time() - t_start
@@ -2962,7 +3124,32 @@ if __name__ == "__main__":
     _mutex = ctypes.windll.kernel32.CreateMutexW(None, True, "AutoExec_Python")
     if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
         ctypes.windll.kernel32.CloseHandle(_mutex)
-        messagebox.showwarning("AutoExec", "이미 실행중입니다.")
+        # 이미 실행중인 AutoExec 창을 찾아 활성화
+        EnumWindowsProc = ctypes.WINFUNCTYPE(
+            ctypes.wintypes.BOOL, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM
+        )
+        user32 = ctypes.windll.user32
+        found = [None]
+
+        def _enum_cb(hwnd, _lp):
+            if not user32.IsWindowVisible(hwnd):
+                return True
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length == 0:
+                return True
+            buf = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buf, length + 1)
+            if buf.value.startswith("실행 관리 서버"):
+                found[0] = hwnd
+                return False  # 찾았으므로 열거 중단
+            return True
+
+        user32.EnumWindows(EnumWindowsProc(_enum_cb), 0)
+        if found[0]:
+            SW_RESTORE = 9
+            if user32.IsIconic(found[0]):
+                user32.ShowWindow(found[0], SW_RESTORE)
+            user32.SetForegroundWindow(found[0])
         sys.exit(0)
 
     db_init()
