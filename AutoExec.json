@@ -6,5 +6,6 @@
     "height": 764,
     "topmost": false
   },
-  "auto_move_window": true
+  "auto_move_window": true,
+  "git_open_folder": true
 }

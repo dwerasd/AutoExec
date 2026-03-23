@@ -293,6 +293,7 @@ def clone_repository(repo_input: str, base_path: str | None = None, reset: bool 
                 return False
         else:
             print(f"오류: 대상 경로가 이미 존재합니다: {target_path}")
+            print(f"##CLONE_PATH:{target_path}")
             print("  --reset 옵션으로 삭제 후 재클론 가능")
             return False
     else:
@@ -352,6 +353,7 @@ def clone_repository(repo_input: str, base_path: str | None = None, reset: bool 
     print(f"{'='*60}")
     print(f"  저장소: https://github.com/{owner}/{repo_name}")
     print(f"  로컬 경로: {target_path}")
+    print(f"##CLONE_PATH:{target_path}")
     print(f"  브랜치: {branch}")
     print()
     print("다음 명령으로 업데이트 확인:")

@@ -1528,16 +1528,22 @@ class AutoExecApp:
         # ── row 1: GitHub 다운로드 ──
         git_frame = ttk.Frame(root)
         git_frame.grid(row=1, column=0, sticky=tk.EW, padx=8, pady=(3, 2))
-        git_frame.columnconfigure(0, weight=1)
+        git_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(git_frame, text="깃허브:").grid(row=0, column=0, padx=(0, 3))
 
         self.git_url_var = tk.StringVar()
         self.git_url_entry = ttk.Entry(git_frame, textvariable=self.git_url_var, font=("Consolas", 9))
-        self.git_url_entry.grid(row=0, column=0, sticky=tk.EW, padx=(0, 3))
+        self.git_url_entry.grid(row=0, column=1, sticky=tk.EW, padx=(0, 3))
         self.git_url_entry.bind("<Return>", lambda e: self._git_download())
         self.git_url_entry.bind("<<Paste>>", self._on_git_paste)
 
         self.git_dl_btn = ttk.Button(git_frame, text="Git", width=4, command=self._git_download)
-        self.git_dl_btn.grid(row=0, column=1)
+        self.git_dl_btn.grid(row=0, column=2)
+
+        self.var_git_open_folder = tk.BooleanVar(value=self.settings.get("git_open_folder", False))
+        ttk.Checkbutton(git_frame, text="완료시 폴더 열기", variable=self.var_git_open_folder,
+                        command=self._save_git_open_folder).grid(row=0, column=3, padx=(3, 0))
 
         # ── row 2: 자동실행 (전체 폭) ──
         lf_task = ttk.LabelFrame(root, text="자동실행", padding=5)
@@ -1565,6 +1571,7 @@ class AutoExecApp:
         task_scroll.grid(row=0, column=1, sticky=tk.NS)
         self.task_tree.config(yscrollcommand=task_scroll.set)
         self.task_tree.bind("<Double-1>", self._on_task_double_click)
+        self.task_tree.bind("<Button-3>", self._on_task_right_click)
 
         task_btn_frame = ttk.Frame(lf_task)
         task_btn_frame.grid(row=1, column=0, sticky=tk.W, pady=(3, 0))
@@ -1607,6 +1614,7 @@ class AutoExecApp:
         move_scroll = ttk.Scrollbar(move_frame, orient=tk.VERTICAL, command=self.move_tree.yview)
         move_scroll.grid(row=0, column=1, sticky=tk.NS)
         self.move_tree.config(yscrollcommand=move_scroll.set)
+        self.move_tree.bind("<Double-1>", self._on_move_double_click)
 
         move_btn_frame = ttk.Frame(lf_move)
         move_btn_frame.grid(row=1, column=0, sticky=tk.W, pady=(3, 0))
@@ -1680,6 +1688,10 @@ class AutoExecApp:
             save_local_settings(self.settings)
         except Exception:
             pass
+
+    def _save_git_open_folder(self):
+        self.settings["git_open_folder"] = self.var_git_open_folder.get()
+        save_local_settings(self.settings)
 
     # ─── 최상위 ──────────────────────────────────────────
     def _toggle_topmost(self):
@@ -1915,8 +1927,55 @@ class AutoExecApp:
             self._refresh_task_list()
             self.log(f"자동실행 추가: {r['name']}")
 
+    @staticmethod
+    def _force_foreground(hwnd):
+        """창을 강제로 포그라운드로 활성화"""
+        if ctypes.windll.user32.IsIconic(hwnd):
+            ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        # AttachThreadInput 트릭: 포그라운드 스레드에 붙어서 SetForegroundWindow 허용
+        fore_hwnd = ctypes.windll.user32.GetForegroundWindow()
+        fore_tid = ctypes.windll.user32.GetWindowThreadProcessId(fore_hwnd, None)
+        target_tid = ctypes.windll.user32.GetWindowThreadProcessId(hwnd, None)
+        if fore_tid != target_tid:
+            ctypes.windll.user32.AttachThreadInput(fore_tid, target_tid, True)
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+            ctypes.windll.user32.AttachThreadInput(fore_tid, target_tid, False)
+        else:
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
+
+    def _activate_window_by_pid(self, pid):
+        """PID로 창을 찾아 포그라운드로 활성화. 성공 시 True."""
+        target_hwnd = None
+
+        def enum_callback(hwnd, lParam):
+            nonlocal target_hwnd
+            if not ctypes.windll.user32.IsWindowVisible(hwnd):
+                return True
+            w_pid = ctypes.wintypes.DWORD()
+            ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(w_pid))
+            if w_pid.value == pid:
+                target_hwnd = hwnd
+                return False
+            return True
+
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+        ctypes.windll.user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
+        if not target_hwnd:
+            self.log(f"[디버그] PID {pid} 에 해당하는 창을 찾지 못함")
+            return False
+        self._force_foreground(target_hwnd)
+        return True
+
+    def _activate_window_by_exe(self, exe_name):
+        """exe 이름으로 창을 찾아 포그라운드로 활성화. 성공 시 True."""
+        hwnds = self._find_windows_by_exe(exe_name.lower())
+        if not hwnds:
+            return False
+        self._force_foreground(hwnds[0])
+        return True
+
     def _on_task_double_click(self, event):
-        """더블클릭: 폴더 → 열기, 자동실행 사용 → 편집, 아닌 경우 → 실행"""
+        """더블클릭: 실행중이면 활성화, 폴더 → 열기, 사용 → 편집, 아닌 경우 → 실행"""
         item = self.task_tree.identify_row(event.y)
         if not item:
             return
@@ -1924,12 +1983,39 @@ class AutoExecApp:
         task = next((t for t in self.task_data if t["id"] == task_id), None)
         if not task:
             return
-        if os.path.isdir(task["executable"]):
+        executable = task["executable"]
+        if os.path.isdir(executable):
             self._open_folder_task(task)
-        elif task["enabled"]:
+            return
+        # 1) AutoExec이 실행한 프로세스 → PID로 창 활성화
+        if task_id in self._running_tasks:
+            proc = self._task_processes.get(task_id)
+            if proc and proc.poll() is None and self._activate_window_by_pid(proc.pid):
+                self.log(f"[자동실행] {task['name']} 창 활성화")
+                return
+        # 2) 외부에서 실행중인 프로세스 → exe/스크립트명으로 창 활성화
+        if self._activate_window_by_exe(os.path.basename(executable)):
+            self.log(f"[자동실행] {task['name']} 창 활성화")
+            return
+        if task["enabled"]:
             self._edit_task()
         else:
             self._run_task()
+
+    def _on_task_right_click(self, event):
+        """우클릭: 컨텍스트 메뉴 표시"""
+        item = self.task_tree.identify_row(event.y)
+        if not item:
+            return
+        self.task_tree.selection_set(item)
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="실행", command=self._run_task)
+        menu.add_command(label="편집", command=self._edit_task)
+        menu.add_command(label="삭제", command=self._delete_task)
+        menu.add_separator()
+        menu.add_command(label="위로", command=lambda: self._move_task(-1))
+        menu.add_command(label="아래로", command=lambda: self._move_task(1))
+        menu.tk_popup(event.x_root, event.y_root)
 
     def _edit_task(self):
         task = self._get_selected_task()
@@ -2081,6 +2167,21 @@ class AutoExecApp:
             self.move_tree.selection_set(new_iid)
             self.move_tree.see(new_iid)
 
+    def _on_move_double_click(self, event):
+        """더블클릭: 해당 프로세스 창을 포그라운드로 활성화"""
+        item = self.move_tree.identify_row(event.y)
+        if not item:
+            return
+        target_id = int(item)
+        target = next((t for t in self.move_data if t["id"] == target_id), None)
+        if not target:
+            return
+        exe_name = target["exe_name"]
+        if self._activate_window_by_exe(exe_name):
+            self.log(f"[이동대상] {target['name']} 창 활성화")
+        else:
+            self.log(f"[이동대상] {target['name']} ({exe_name}) 실행중인 창 없음")
+
     def _manual_move_target(self):
         """선택한 이동 대상의 창을 지정 위치로 즉시 이동"""
         target = self._get_selected_move_target()
@@ -2171,9 +2272,35 @@ class AutoExecApp:
         else:
             self.log(f"[폴더] {folder_name} 창을 찾지 못함")
 
+    @staticmethod
+    def _find_pids_by_script(script_name_lower):
+        """Python 스크립트를 실행중인 프로세스 PID set 반환 (wmic 사용)"""
+        try:
+            result = subprocess.run(
+                ["wmic", "process", "where",
+                 "name='python.exe' or name='pythonw.exe'",
+                 "get", "ProcessId,CommandLine", "/format:csv"],
+                capture_output=True, text=True, timeout=5,
+                creationflags=0x08000000,  # CREATE_NO_WINDOW
+            )
+            pids = set()
+            for line in result.stdout.splitlines():
+                if script_name_lower in line.lower():
+                    parts = line.strip().split(",")
+                    if len(parts) >= 2:
+                        try:
+                            pids.add(int(parts[-1]))
+                        except ValueError:
+                            pass
+            return pids
+        except Exception:
+            return set()
+
     def _find_windows_by_exe(self, exe_name_lower):
-        """특정 프로세스명의 창 핸들 목록 반환"""
+        """특정 프로세스명의 창 핸들 목록 반환 (.py/.pyw는 커맨드라인으로 매칭)"""
         hwnds = []
+        is_python_script = exe_name_lower.endswith((".py", ".pyw"))
+        script_pids = self._find_pids_by_script(exe_name_lower) if is_python_script else set()
 
         def enum_callback(hwnd, lParam):
             if not ctypes.windll.user32.IsWindowVisible(hwnd):
@@ -2182,6 +2309,9 @@ class AutoExecApp:
                 return True
             pid = ctypes.wintypes.DWORD()
             ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if is_python_script and pid.value in script_pids:
+                hwnds.append(hwnd)
+                return True
             handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid.value)
             if handle:
                 try:
@@ -2196,6 +2326,38 @@ class AutoExecApp:
 
         WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
         ctypes.windll.user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
+
+        # OpenProcess 실패 대비: 프로세스 목록에서 PID를 찾아 창 매칭
+        if not hwnds and not is_python_script:
+            try:
+                result = subprocess.run(
+                    ["tasklist", "/fi", f"imagename eq {exe_name_lower}", "/fo", "csv", "/nh"],
+                    capture_output=True, text=True, timeout=5,
+                    creationflags=0x08000000,
+                )
+                fallback_pids = set()
+                for line in result.stdout.splitlines():
+                    parts = line.strip().strip('"').split('","')
+                    if len(parts) >= 2:
+                        try:
+                            fallback_pids.add(int(parts[1]))
+                        except ValueError:
+                            pass
+                if fallback_pids:
+                    def enum_fallback(hwnd, lParam):
+                        if not ctypes.windll.user32.IsWindowVisible(hwnd):
+                            return True
+                        if ctypes.windll.user32.GetWindowTextLengthW(hwnd) == 0:
+                            return True
+                        w_pid = ctypes.wintypes.DWORD()
+                        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(w_pid))
+                        if w_pid.value in fallback_pids:
+                            hwnds.append(hwnd)
+                        return True
+                    ctypes.windll.user32.EnumWindows(WNDENUMPROC(enum_fallback), 0)
+            except Exception:
+                pass
+
         return hwnds
 
     # ─── GitHub 다운로드 ──────────────────────────────────
@@ -2207,12 +2369,27 @@ class AutoExecApp:
         """붙여넣기된 텍스트가 GitHub URL이면 자동 다운로드"""
         url = self.git_url_var.get().strip()
         if url and "github.com/" in url:
+            if not self._is_valid_git_url(url):
+                self.git_url_var.set("")
+                self.log("[GitHub] 잘못된 붙여넣기 감지 (URL이 아닌 텍스트)")
+                return
             self._git_download()
+
+    @staticmethod
+    def _is_valid_git_url(text: str) -> bool:
+        """GitHub URL 유효성 검증 (여러 줄이거나 URL 형식이 아니면 False)"""
+        if "\n" in text or "\r" in text:
+            return False
+        import re
+        return bool(re.match(r'^https?://github\.com/[\w.\-]+/[\w.\-]+/?$', text))
 
     def _git_download(self):
         """GitHub 저장소 다운로드 (gitclone.py 호출)"""
         url = self.git_url_var.get().strip()
         if not url:
+            return
+        if not self._is_valid_git_url(url):
+            self.log("[GitHub] 잘못된 URL 형식입니다")
             return
         # 버튼 비활성화
         self.git_dl_btn.config(state=tk.DISABLED)
@@ -2245,21 +2422,41 @@ class AutoExecApp:
         """다운로드 완료 콜백 (메인 스레드)"""
         self.git_dl_btn.config(state=tk.NORMAL)
         self.git_url_entry.config(state=tk.NORMAL)
+        # 출력에서 저장 경로 추출 (##CLONE_PATH: 마커 사용)
+        saved_path = ""
+        for line in output.splitlines():
+            if line.startswith("##CLONE_PATH:"):
+                saved_path = line[len("##CLONE_PATH:"):].strip()
         if success:
-            self.log(f"[GitHub] 다운로드 성공")
+            self.log(f"[GitHub] 다운로드 성공: {saved_path}" if saved_path else "[GitHub] 다운로드 성공")
             self.git_url_var.set("")
+            if saved_path and self.var_git_open_folder.get() and os.path.isdir(saved_path):
+                subprocess.Popen(["explorer.exe", os.path.normpath(saved_path)])
         else:
-            self.log(f"[GitHub] 다운로드 실패: {output[:200]}")
-            messagebox.showerror("GitHub 다운로드 실패", output[:500], parent=self.root)
+            if saved_path:
+                self.log(f"[GitHub] 이미 존재하는 경로: {saved_path}")
+            else:
+                self.log(f"[GitHub] 다운로드 실패: {output[:200]}")
+                messagebox.showerror("GitHub 다운로드 실패", output[:500], parent=self.root)
         self.git_url_entry.focus_set()
 
     def _run_task(self):
-        """선택한 자동실행 작업을 즉시 테스트 실행 (폴더면 열기)"""
+        """선택한 자동실행 작업을 즉시 테스트 실행 (폴더면 열기, 실행중이면 활성화)"""
         task = self._get_selected_task()
         if not task:
             return
         if os.path.isdir(task["executable"]):
             self._open_folder_task(task)
+            return
+        # 이미 실행중인 창이 있으면 활성화
+        task_id = task["id"]
+        if task_id in self._running_tasks:
+            proc = self._task_processes.get(task_id)
+            if proc and proc.poll() is None and self._activate_window_by_pid(proc.pid):
+                self.log(f"[자동실행] {task['name']} 창 활성화")
+                return
+        if self._activate_window_by_exe(os.path.basename(task["executable"])):
+            self.log(f"[자동실행] {task['name']} 창 활성화")
             return
         repeat_mode = task.get("repeat_mode", "once")
         if repeat_mode == "once":
