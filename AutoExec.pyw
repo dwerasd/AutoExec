@@ -410,6 +410,8 @@ def _get_process_cmdline(pid):
         pp = ctypes.c_void_p()
         kernel32.ReadProcessMemory(h, pbi.PebBaseAddress + 0x20, ctypes.byref(pp), ctypes.sizeof(pp), ctypes.byref(rd))
         us = US()
+        if pp.value is None:
+            return None
         kernel32.ReadProcessMemory(h, pp.value + 0x70, ctypes.byref(us), ctypes.sizeof(us), ctypes.byref(rd))
         buf = ctypes.create_unicode_buffer(us.Length // 2 + 1)
         kernel32.ReadProcessMemory(h, us.Buffer, buf, us.Length, ctypes.byref(rd))
@@ -1661,7 +1663,7 @@ class AutoExecApp:
         self.git_dl_btn = ttk.Button(git_frame, text="Git", width=4, command=self._git_download)
         self.git_dl_btn.grid(row=0, column=2)
 
-        self.var_git_open_folder = tk.BooleanVar(value=self.settings.get("git_open_folder", False))
+        self.var_git_open_folder = tk.BooleanVar(value=bool(self.settings.get("git_open_folder", False)))
         ttk.Checkbutton(git_frame, text="완료시 폴더 열기", variable=self.var_git_open_folder,
                         command=self._save_git_open_folder).grid(row=0, column=3, padx=(3, 0))
 
@@ -1810,7 +1812,7 @@ class AutoExecApp:
             pass
 
     def _save_git_open_folder(self):
-        self.settings["git_open_folder"] = self.var_git_open_folder.get()
+        self.settings["git_open_folder"] = self.var_git_open_folder.get()  # type: ignore[assignment]
         save_local_settings(self.settings)
 
     # ─── 최상위 ──────────────────────────────────────────
