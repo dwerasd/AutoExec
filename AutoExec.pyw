@@ -134,6 +134,57 @@ def db_init():
             sort_order INTEGER NOT NULL DEFAULT 0
         )
     """)
+    # ── 창 배치 프로파일 시스템 ──
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS window_profiles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL DEFAULT '',
+            exe_name TEXT NOT NULL DEFAULT '',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            trigger_mode TEXT NOT NULL DEFAULT 'monitor_change',
+            sort_order INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS window_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            profile_id INTEGER NOT NULL,
+            window_class TEXT NOT NULL DEFAULT '',
+            title_pattern TEXT NOT NULL DEFAULT '',
+            move_mode TEXT NOT NULL DEFAULT 'custom',
+            target_x INTEGER NOT NULL DEFAULT 0,
+            target_y INTEGER NOT NULL DEFAULT 0,
+            target_w INTEGER NOT NULL DEFAULT 0,
+            target_h INTEGER NOT NULL DEFAULT 0,
+            maximize INTEGER NOT NULL DEFAULT 0,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    # move_targets → window_profiles + window_rules 마이그레이션
+    try:
+        cur.execute("SELECT COUNT(*) as cnt FROM window_profiles")
+        profile_count = cur.fetchone()["cnt"]
+        if profile_count == 0:
+            cur.execute("SELECT * FROM move_targets ORDER BY sort_order, id")
+            old_targets = cur.fetchall()
+            for ot in old_targets:
+                cur.execute(
+                    "INSERT INTO window_profiles (name, exe_name, enabled, trigger_mode, sort_order) "
+                    "VALUES (?, ?, ?, 'monitor_change', ?)",
+                    (ot["name"], ot["exe_name"], ot.get("enabled", 1), ot.get("sort_order", 0)),
+                )
+                new_profile_id = cur.lastrowid
+                cur.execute(
+                    "INSERT INTO window_rules (profile_id, window_class, title_pattern, move_mode, "
+                    "target_x, target_y, target_w, target_h, maximize, sort_order) "
+                    "VALUES (?, '', '', ?, ?, ?, ?, ?, ?, 0)",
+                    (new_profile_id, ot.get("move_mode", "sub_monitor"),
+                     ot.get("target_x", 0), ot.get("target_y", 0),
+                     ot.get("target_w", 0), ot.get("target_h", 0),
+                     ot.get("maximize", 1)),
+                )
+    except Exception:
+        pass
     conn.commit()
     conn.close()
 
@@ -182,7 +233,7 @@ def db_delete_pc(pc_id):
 
 def db_swap_sort_order(table, id_a, id_b):
     """두 레코드의 sort_order를 교환"""
-    if table not in ("pcs", "tasks", "move_targets"):
+    if table not in ("pcs", "tasks", "move_targets", "window_profiles", "window_rules"):
         return
     conn = get_db_connection()
     try:
@@ -260,45 +311,129 @@ def db_update_task_last_run(task_id, date_str):
 
 
 # ═══════════════════════════════════════════════════════════
-#  창 이동 대상 (move_targets 테이블)
+#  창 배치 프로파일 (window_profiles + window_rules 테이블)
 # ═══════════════════════════════════════════════════════════
-def db_fetch_move_targets():
+def db_fetch_profiles():
+    """창 배치 프로파일 목록 조회"""
     conn = get_db_connection()
     try:
         cur = conn.cursor()
-        cur.execute("SELECT * FROM move_targets ORDER BY sort_order, id")
+        cur.execute("SELECT * FROM window_profiles ORDER BY sort_order, id")
         return cur.fetchall()
     finally:
         conn.close()
 
 
-def db_upsert_move_target(target_id, name, exe_name, enabled=1, move_mode="sub_monitor",
-                          target_x=0, target_y=0, target_w=0, target_h=0, maximize=1):
+def db_upsert_profile(profile_id, name, exe_name, enabled=1, trigger_mode="monitor_change"):
+    """프로파일 추가 또는 수정. 반환: id"""
     conn = get_db_connection()
     try:
         cur = conn.cursor()
-        if target_id:
+        if profile_id:
             cur.execute(
-                "UPDATE move_targets SET name=?, exe_name=?, enabled=?, move_mode=?, "
-                "target_x=?, target_y=?, target_w=?, target_h=?, maximize=? WHERE id=?",
-                (name, exe_name, int(enabled), move_mode, target_x, target_y, target_w, target_h, int(maximize), target_id),
+                "UPDATE window_profiles SET name=?, exe_name=?, enabled=?, trigger_mode=? WHERE id=?",
+                (name, exe_name, int(enabled), trigger_mode, profile_id),
             )
         else:
             cur.execute(
-                "INSERT INTO move_targets (name, exe_name, enabled, move_mode, target_x, target_y, target_w, target_h, maximize, sort_order) "
-                "VALUES (?,?,?,?,?,?,?,?,?, (SELECT IFNULL(MAX(sort_order),0)+1 FROM move_targets))",
-                (name, exe_name, int(enabled), move_mode, target_x, target_y, target_w, target_h, int(maximize)),
+                "INSERT INTO window_profiles (name, exe_name, enabled, trigger_mode, sort_order) "
+                "VALUES (?,?,?,?, (SELECT IFNULL(MAX(sort_order),0)+1 FROM window_profiles))",
+                (name, exe_name, int(enabled), trigger_mode),
+            )
+            profile_id = cur.lastrowid
+        conn.commit()
+        return profile_id
+    finally:
+        conn.close()
+
+
+def db_delete_profile(profile_id):
+    """프로파일 + 소속 규칙 삭제"""
+    conn = get_db_connection()
+    try:
+        conn.execute("DELETE FROM window_rules WHERE profile_id=?", (profile_id,))
+        conn.execute("DELETE FROM window_profiles WHERE id=?", (profile_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def db_fetch_rules(profile_id):
+    """특정 프로파일의 규칙 목록 조회"""
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM window_rules WHERE profile_id=? ORDER BY sort_order, id", (profile_id,))
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def db_upsert_rule(rule_id, profile_id, window_class="", title_pattern="",
+                   move_mode="custom", target_x=0, target_y=0, target_w=0, target_h=0, maximize=0):
+    """규칙 추가 또는 수정. 반환: id"""
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        if rule_id:
+            cur.execute(
+                "UPDATE window_rules SET profile_id=?, window_class=?, title_pattern=?, move_mode=?, "
+                "target_x=?, target_y=?, target_w=?, target_h=?, maximize=? WHERE id=?",
+                (profile_id, window_class, title_pattern, move_mode,
+                 target_x, target_y, target_w, target_h, int(maximize), rule_id),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO window_rules (profile_id, window_class, title_pattern, move_mode, "
+                "target_x, target_y, target_w, target_h, maximize, sort_order) "
+                "VALUES (?,?,?,?,?,?,?,?,?, (SELECT IFNULL(MAX(sort_order),0)+1 FROM window_rules WHERE profile_id=?))",
+                (profile_id, window_class, title_pattern, move_mode,
+                 target_x, target_y, target_w, target_h, int(maximize), profile_id),
+            )
+            rule_id = cur.lastrowid
+        conn.commit()
+        return rule_id
+    finally:
+        conn.close()
+
+
+def db_delete_rule(rule_id):
+    """규칙 삭제"""
+    conn = get_db_connection()
+    try:
+        conn.execute("DELETE FROM window_rules WHERE id=?", (rule_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def db_replace_rules(profile_id, rules_list):
+    """프로파일의 모든 규칙을 교체 (일괄 캡처용)"""
+    conn = get_db_connection()
+    try:
+        conn.execute("DELETE FROM window_rules WHERE profile_id=?", (profile_id,))
+        cur = conn.cursor()
+        for idx, r in enumerate(rules_list):
+            cur.execute(
+                "INSERT INTO window_rules (profile_id, window_class, title_pattern, move_mode, "
+                "target_x, target_y, target_w, target_h, maximize, sort_order) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (profile_id, r.get("window_class", ""), r.get("title_pattern", ""),
+                 r.get("move_mode", "custom"), r.get("target_x", 0), r.get("target_y", 0),
+                 r.get("target_w", 0), r.get("target_h", 0), int(r.get("maximize", 0)), idx),
             )
         conn.commit()
     finally:
         conn.close()
 
 
-def db_delete_move_target(target_id):
+def db_count_rules(profile_id):
+    """프로파일의 규칙 수 반환"""
     conn = get_db_connection()
     try:
-        conn.execute("DELETE FROM move_targets WHERE id=?", (target_id,))
-        conn.commit()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) as cnt FROM window_rules WHERE profile_id=?", (profile_id,))
+        return cur.fetchone()["cnt"]
     finally:
         conn.close()
 
@@ -457,6 +592,85 @@ def _find_window_by_exe_name(exe_name_lower):
     WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
     ctypes.windll.user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
     return result[0]
+
+
+def _enumerate_process_windows(exe_name_lower):
+    """프로세스명(소문자)의 모든 visible 창 정보 반환: [{"hwnd", "class_name", "title", "x", "y", "w", "h"}, ...]"""
+    windows = []
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    GetClassNameW = user32.GetClassNameW
+
+    def enum_callback(hwnd, lParam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        if user32.GetWindowTextLengthW(hwnd) == 0:
+            return True
+        pid = ctypes.wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        handle = kernel32.OpenProcess(0x1000, False, pid.value)
+        if handle:
+            try:
+                buf = ctypes.create_unicode_buffer(260)
+                size = ctypes.wintypes.DWORD(260)
+                if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                    if os.path.basename(buf.value).lower() == exe_name_lower:
+                        cls_buf = ctypes.create_unicode_buffer(256)
+                        GetClassNameW(hwnd, cls_buf, 256)
+                        length = user32.GetWindowTextLengthW(hwnd)
+                        title_buf = ctypes.create_unicode_buffer(length + 1)
+                        user32.GetWindowTextW(hwnd, title_buf, length + 1)
+                        rect = ctypes.wintypes.RECT()
+                        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+                        windows.append({
+                            "hwnd": hwnd,
+                            "class_name": cls_buf.value,
+                            "title": title_buf.value,
+                            "x": rect.left, "y": rect.top,
+                            "w": rect.right - rect.left, "h": rect.bottom - rect.top,
+                        })
+            finally:
+                kernel32.CloseHandle(handle)
+        return True
+
+    WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+    user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
+    return windows
+
+
+def _find_single_window(exe_name_lower, class_filter="", title_filter=""):
+    """class+title 조건으로 단일 창 핸들 반환"""
+    windows = _enumerate_process_windows(exe_name_lower)
+    for w in windows:
+        if class_filter and w["class_name"] != class_filter:
+            continue
+        if title_filter:
+            if title_filter.endswith("*"):
+                if not w["title"].startswith(title_filter[:-1]):
+                    continue
+            elif title_filter not in w["title"]:
+                continue
+        return w["hwnd"]
+    return None
+
+
+def _match_window_to_rules(class_name, title, rules):
+    """창의 class/title에 매칭되는 첫 번째 규칙 반환. 없으면 None."""
+    for rule in rules:
+        rc = rule.get("window_class", "")
+        rt = rule.get("title_pattern", "")
+        # class 매칭
+        if rc and rc != class_name:
+            continue
+        # title 매칭
+        if rt:
+            if rt.endswith("*"):
+                if not title.startswith(rt[:-1]):
+                    continue
+            elif rt not in title:
+                continue
+        return rule
+    return None
 
 
 # ═══════════════════════════════════════════════════════════
@@ -1057,50 +1271,43 @@ class TaskEditDialog(tk.Toplevel):
 # ═══════════════════════════════════════════════════════════
 #  창 이동 대상 편집 다이얼로그
 # ═══════════════════════════════════════════════════════════
-class MoveTargetEditDialog(tk.Toplevel):
+class RuleEditDialog(tk.Toplevel):
+    """창 배치 규칙 편집 다이얼로그"""
     _MODE_LABELS = {"서브 모니터": "sub_monitor", "현재 위치 저장": "save_position", "좌표 직접 입력": "custom"}
     _MODE_KEYS = {"sub_monitor": "서브 모니터", "save_position": "현재 위치 저장", "custom": "좌표 직접 입력"}
 
-    def __init__(self, parent, target=None):
+    def __init__(self, parent, rule=None, exe_name=""):
         super().__init__(parent)
         self.result = None
-        self.target = target
-        self.title("이동 대상 편집" if target else "이동 대상 추가")
+        self.rule = rule
+        self._exe_name = exe_name
+        self.title("규칙 편집" if rule else "규칙 추가")
         self.resizable(False, False)
         self.grab_set()
 
         frame = ttk.Frame(self, padding=10)
         frame.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(frame, text="이름:").grid(row=0, column=0, sticky=tk.W, pady=3)
-        self.ent_name = ttk.Entry(frame, width=30)
-        self.ent_name.grid(row=0, column=1, columnspan=3, pady=3, padx=(5, 0))
+        ttk.Label(frame, text="Window Class:").grid(row=0, column=0, sticky=tk.W, pady=3)
+        self.ent_class = ttk.Entry(frame, width=30)
+        self.ent_class.grid(row=0, column=1, columnspan=3, pady=3, padx=(5, 0))
+        ttk.Label(frame, text="(비어있으면 모두 매칭)", foreground="gray").grid(row=1, column=0, columnspan=4, sticky=tk.W)
 
-        ttk.Label(frame, text="프로세스명:").grid(row=1, column=0, sticky=tk.W, pady=3)
-        self.ent_exe = ttk.Entry(frame, width=30)
-        self.ent_exe.grid(row=1, column=1, columnspan=3, pady=3, padx=(5, 0))
-        ttk.Label(frame, text="(예: chrome.exe)", foreground="gray").grid(
-            row=2, column=0, columnspan=4, sticky=tk.W
-        )
-
-        self.var_enabled = tk.BooleanVar(value=True)
-        ttk.Checkbutton(frame, text="자동 이동 사용", variable=self.var_enabled).grid(
-            row=3, column=0, columnspan=2, sticky=tk.W, pady=3
-        )
-
-        self.var_maximize = tk.BooleanVar(value=True)
-        self.chk_maximize = ttk.Checkbutton(frame, text="최대화", variable=self.var_maximize)
-        self.chk_maximize.grid(row=3, column=2, columnspan=2, sticky=tk.W, pady=3)
+        ttk.Label(frame, text="Title 패턴:").grid(row=2, column=0, sticky=tk.W, pady=3)
+        self.ent_title = ttk.Entry(frame, width=30)
+        self.ent_title.grid(row=2, column=1, columnspan=3, pady=3, padx=(5, 0))
+        ttk.Label(frame, text="(비어있으면 모두 매칭, * = 와일드카드)", foreground="gray").grid(
+            row=3, column=0, columnspan=4, sticky=tk.W)
 
         ttk.Label(frame, text="이동 위치:").grid(row=4, column=0, sticky=tk.W, pady=3)
-        self.var_mode = tk.StringVar(value="서브 모니터")
+        self.var_mode = tk.StringVar(value="좌표 직접 입력")
         self.cmb_mode = ttk.Combobox(frame, textvariable=self.var_mode,
                                      values=list(self._MODE_LABELS.keys()),
                                      state="readonly", width=15)
         self.cmb_mode.grid(row=4, column=1, columnspan=3, sticky=tk.W, padx=(5, 0), pady=3)
         self.cmb_mode.bind("<<ComboboxSelected>>", self._on_mode_changed)
 
-        # 좌표 입력 (custom 모드에서만 표시)
+        # 좌표 입력
         self.coord_frame = ttk.Frame(frame)
         self.coord_frame.grid(row=5, column=0, columnspan=4, sticky=tk.W, pady=3)
         ttk.Label(self.coord_frame, text="X:").pack(side=tk.LEFT)
@@ -1119,36 +1326,38 @@ class MoveTargetEditDialog(tk.Toplevel):
         self.ent_h = ttk.Entry(self.coord_frame, width=6)
         self.ent_h.pack(side=tk.LEFT, padx=(2, 0))
         self.ent_h.insert(0, "0")
-        ttk.Label(self.coord_frame, text="(W,H=0: 현재 크기 유지)", foreground="gray").pack(side=tk.LEFT, padx=(8, 0))
 
-        # 위치 저장 프레임 (save_position 모드에서만 표시)
+        # 위치 캡처 프레임
         self.save_pos_frame = ttk.Frame(frame)
         self.save_pos_frame.grid(row=6, column=0, columnspan=4, sticky=tk.W, pady=3)
         ttk.Button(self.save_pos_frame, text="현재 위치 캡처", command=self._capture_position).pack(side=tk.LEFT)
         self.lbl_saved_pos = ttk.Label(self.save_pos_frame, text="", foreground="gray")
         self.lbl_saved_pos.pack(side=tk.LEFT, padx=(8, 0))
 
-        if target:
-            self.ent_name.insert(0, target["name"])
-            self.ent_exe.insert(0, target["exe_name"])
-            self.var_enabled.set(bool(target.get("enabled", 1)))
-            self.var_maximize.set(bool(target.get("maximize", 1)))
-            mode = target.get("move_mode", "sub_monitor")
-            self.var_mode.set(self._MODE_KEYS.get(mode, "서브 모니터"))
-            if mode == "custom":
+        self.var_maximize = tk.BooleanVar(value=False)
+        ttk.Checkbutton(frame, text="최대화", variable=self.var_maximize).grid(
+            row=7, column=0, columnspan=2, sticky=tk.W, pady=3)
+
+        if rule:
+            self.ent_class.insert(0, rule.get("window_class", ""))
+            self.ent_title.insert(0, rule.get("title_pattern", ""))
+            self.var_maximize.set(bool(rule.get("maximize", 0)))
+            mode = rule.get("move_mode", "custom")
+            self.var_mode.set(self._MODE_KEYS.get(mode, "좌표 직접 입력"))
+            if mode in ("custom", "save_position"):
                 self.ent_x.delete(0, tk.END)
-                self.ent_x.insert(0, str(target.get("target_x", 0)))
+                self.ent_x.insert(0, str(rule.get("target_x", 0)))
                 self.ent_y.delete(0, tk.END)
-                self.ent_y.insert(0, str(target.get("target_y", 0)))
+                self.ent_y.insert(0, str(rule.get("target_y", 0)))
                 self.ent_w.delete(0, tk.END)
-                self.ent_w.insert(0, str(target.get("target_w", 0)))
+                self.ent_w.insert(0, str(rule.get("target_w", 0)))
                 self.ent_h.delete(0, tk.END)
-                self.ent_h.insert(0, str(target.get("target_h", 0)))
+                self.ent_h.insert(0, str(rule.get("target_h", 0)))
 
         self._on_mode_changed()
 
         btn_frame = ttk.Frame(frame)
-        btn_frame.grid(row=7, column=0, columnspan=4, pady=(10, 0))
+        btn_frame.grid(row=8, column=0, columnspan=4, pady=(10, 0))
         ttk.Button(btn_frame, text="확인", command=self._on_ok).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="취소", command=self.destroy).pack(side=tk.LEFT, padx=5)
 
@@ -1162,11 +1371,10 @@ class MoveTargetEditDialog(tk.Toplevel):
         dw = self.winfo_width()
         dh = self.winfo_height()
         self.geometry(f"+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
-        self.ent_name.focus_set()
+        self.ent_class.focus_set()
 
     def _on_mode_changed(self, event=None):
-        mode_label = self.var_mode.get()
-        mode = self._MODE_LABELS.get(mode_label, "sub_monitor")
+        mode = self._MODE_LABELS.get(self.var_mode.get(), "custom")
         self.coord_frame.grid_remove()
         self.save_pos_frame.grid_remove()
         if mode == "custom":
@@ -1174,13 +1382,11 @@ class MoveTargetEditDialog(tk.Toplevel):
         elif mode == "save_position":
             self.save_pos_frame.grid()
             self._update_saved_pos_label()
-        # 모드 변경 시 최대화 기본값 (사용자가 직접 변경한 경우가 아닐 때만)
         if event is not None:
             self.var_maximize.set(mode == "sub_monitor")
 
     def _update_saved_pos_label(self):
-        """저장된 위치 표시"""
-        src = getattr(self, "_captured", None) or (self.target if self.target else None)
+        src = getattr(self, "_captured", None) or (self.rule if self.rule else None)
         if src:
             x, y = src.get("target_x", 0), src.get("target_y", 0)
             w, h = src.get("target_w", 0), src.get("target_h", 0)
@@ -1191,58 +1397,36 @@ class MoveTargetEditDialog(tk.Toplevel):
         self.lbl_saved_pos.config(text="저장된 위치 없음 - 캡처하세요")
 
     def _capture_position(self):
-        """현재 실행중인 프로세스의 창 위치를 캡처"""
-        exe_name = self.ent_exe.get().strip().lower()
+        """class+title로 매칭되는 창의 현재 위치를 캡처"""
+        cls_filter = self.ent_class.get().strip()
+        title_filter = self.ent_title.get().strip()
+        exe_name = self._exe_name.lower()
         if not exe_name:
-            messagebox.showwarning("입력 오류", "프로세스명을 먼저 입력하세요.", parent=self)
+            messagebox.showwarning("입력 오류", "프로파일의 프로세스명이 없습니다.", parent=self)
             return
 
-        hwnds = []
-
-        def enum_callback(hwnd, lParam):
-            if not ctypes.windll.user32.IsWindowVisible(hwnd):
-                return True
-            if ctypes.windll.user32.GetWindowTextLengthW(hwnd) == 0:
-                return True
-            pid = ctypes.wintypes.DWORD()
-            ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-            handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid.value)
-            if handle:
-                try:
-                    buf = ctypes.create_unicode_buffer(260)
-                    size = ctypes.wintypes.DWORD(260)
-                    if ctypes.windll.kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
-                        if os.path.basename(buf.value).lower() == exe_name:
-                            hwnds.append(hwnd)
-                finally:
-                    ctypes.windll.kernel32.CloseHandle(handle)
-            return True
-
-        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
-        ctypes.windll.user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
-
-        if not hwnds:
-            messagebox.showinfo("알림", f"{exe_name} 실행중인 창을 찾을 수 없습니다.", parent=self)
+        found_hwnd = _find_single_window(exe_name, cls_filter, title_filter)
+        if not found_hwnd:
+            messagebox.showinfo("알림", "매칭되는 창을 찾을 수 없습니다.", parent=self)
             return
 
-        # 첫 번째 창의 위치 캡처
         rect = ctypes.wintypes.RECT()
-        ctypes.windll.user32.GetWindowRect(hwnds[0], ctypes.byref(rect))
+        ctypes.windll.user32.GetWindowRect(found_hwnd, ctypes.byref(rect))
         x, y = rect.left, rect.top
         w, h = rect.right - rect.left, rect.bottom - rect.top
-
-        # 캡처 좌표 저장
         self._captured = {"target_x": x, "target_y": y, "target_w": w, "target_h": h}
-
+        self.ent_x.delete(0, tk.END)
+        self.ent_x.insert(0, str(x))
+        self.ent_y.delete(0, tk.END)
+        self.ent_y.insert(0, str(y))
+        self.ent_w.delete(0, tk.END)
+        self.ent_w.insert(0, str(w))
+        self.ent_h.delete(0, tk.END)
+        self.ent_h.insert(0, str(h))
         self.lbl_saved_pos.config(text=f"캡처 완료: {x},{y} {w}x{h}")
 
     def _on_ok(self):
-        name = self.ent_name.get().strip()
-        exe_name = self.ent_exe.get().strip()
-        if not name or not exe_name:
-            messagebox.showwarning("입력 오류", "이름과 프로세스명을 입력하세요.", parent=self)
-            return
-        mode = self._MODE_LABELS.get(self.var_mode.get(), "sub_monitor")
+        mode = self._MODE_LABELS.get(self.var_mode.get(), "custom")
         target_x = target_y = target_w = target_h = 0
         if mode == "custom":
             try:
@@ -1254,20 +1438,228 @@ class MoveTargetEditDialog(tk.Toplevel):
                 messagebox.showwarning("입력 오류", "좌표는 정수로 입력하세요.", parent=self)
                 return
         elif mode == "save_position":
-            src = getattr(self, "_captured", None) or (self.target if self.target else {})
+            src = getattr(self, "_captured", None) or (self.rule if self.rule else {})
             target_x = src.get("target_x", 0)
             target_y = src.get("target_y", 0)
             target_w = src.get("target_w", 0)
             target_h = src.get("target_h", 0)
         self.result = {
-            "id": self.target.get("id") if self.target else None,
-            "name": name,
-            "exe_name": exe_name,
-            "enabled": self.var_enabled.get(),
+            "id": self.rule.get("id") if self.rule else None,
+            "window_class": self.ent_class.get().strip(),
+            "title_pattern": self.ent_title.get().strip(),
             "move_mode": mode,
             "target_x": target_x, "target_y": target_y,
             "target_w": target_w, "target_h": target_h,
             "maximize": self.var_maximize.get(),
+        }
+        self.destroy()
+
+
+class ProfileEditDialog(tk.Toplevel):
+    """창 배치 프로파일 편집 다이얼로그"""
+    _TRIGGER_LABELS = {"듀얼모니터 감지": "monitor_change", "프로세스 감지": "process_start", "둘 다": "both"}
+    _TRIGGER_KEYS = {"monitor_change": "듀얼모니터 감지", "process_start": "프로세스 감지", "both": "둘 다"}
+    _MODE_DISPLAY = {"sub_monitor": "서브모니터", "save_position": "저장위치", "custom": "좌표직접"}
+
+    def __init__(self, parent, profile=None):
+        super().__init__(parent)
+        self.result = None
+        self.profile = profile
+        self.rules_data = []  # 현재 편집중인 규칙 목록
+        self.title("프로파일 편집" if profile else "프로파일 추가")
+        self.resizable(True, True)
+        self.grab_set()
+        self.minsize(580, 400)
+
+        frame = ttk.Frame(self, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+        frame.columnconfigure(1, weight=1)
+
+        # ── 상단: 프로파일 기본 정보 ──
+        ttk.Label(frame, text="이름:").grid(row=0, column=0, sticky=tk.W, pady=3)
+        self.ent_name = ttk.Entry(frame, width=30)
+        self.ent_name.grid(row=0, column=1, columnspan=3, sticky=tk.EW, pady=3, padx=(5, 0))
+
+        ttk.Label(frame, text="프로세스명:").grid(row=1, column=0, sticky=tk.W, pady=3)
+        self.ent_exe = ttk.Entry(frame, width=30)
+        self.ent_exe.grid(row=1, column=1, columnspan=3, sticky=tk.EW, pady=3, padx=(5, 0))
+
+        info_frame = ttk.Frame(frame)
+        info_frame.grid(row=2, column=0, columnspan=4, sticky=tk.W)
+        self.var_enabled = tk.BooleanVar(value=True)
+        ttk.Checkbutton(info_frame, text="사용", variable=self.var_enabled).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(info_frame, text="트리거:").pack(side=tk.LEFT)
+        self.var_trigger = tk.StringVar(value="듀얼모니터 감지")
+        self.cmb_trigger = ttk.Combobox(info_frame, textvariable=self.var_trigger,
+                                        values=list(self._TRIGGER_LABELS.keys()),
+                                        state="readonly", width=14)
+        self.cmb_trigger.pack(side=tk.LEFT, padx=(5, 0))
+
+        # ── 중단: 창 규칙 목록 ──
+        lf_rules = ttk.LabelFrame(frame, text="창 규칙", padding=5)
+        lf_rules.grid(row=3, column=0, columnspan=4, sticky=tk.NSEW, pady=(8, 0))
+        lf_rules.columnconfigure(0, weight=1)
+        lf_rules.rowconfigure(0, weight=1)
+        frame.rowconfigure(3, weight=1)
+
+        rule_cols = ("Class", "Title 패턴", "이동 위치", "최대화")
+        self.rule_tree = ttk.Treeview(lf_rules, columns=rule_cols, show="headings", height=8)
+        self.rule_tree.heading("Class", text="Class")
+        self.rule_tree.heading("Title 패턴", text="Title 패턴")
+        self.rule_tree.heading("이동 위치", text="이동 위치")
+        self.rule_tree.heading("최대화", text="Max")
+        self.rule_tree.column("Class", width=140)
+        self.rule_tree.column("Title 패턴", width=120)
+        self.rule_tree.column("이동 위치", width=180)
+        self.rule_tree.column("최대화", width=40, anchor=tk.CENTER)
+        self.rule_tree.grid(row=0, column=0, sticky=tk.NSEW)
+        rule_scroll = ttk.Scrollbar(lf_rules, orient=tk.VERTICAL, command=self.rule_tree.yview)
+        rule_scroll.grid(row=0, column=1, sticky=tk.NS)
+        self.rule_tree.config(yscrollcommand=rule_scroll.set)
+
+        rule_btn_frame = ttk.Frame(lf_rules)
+        rule_btn_frame.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(3, 0))
+        ttk.Button(rule_btn_frame, text="추가", width=6, command=self._add_rule).pack(side=tk.LEFT, padx=(0, 3))
+        ttk.Button(rule_btn_frame, text="편집", width=6, command=self._edit_rule).pack(side=tk.LEFT, padx=(0, 3))
+        ttk.Button(rule_btn_frame, text="삭제", width=6, command=self._delete_rule).pack(side=tk.LEFT, padx=(0, 3))
+        ttk.Button(rule_btn_frame, text="\u25b2", width=3, command=lambda: self._reorder_rule(-1)).pack(side=tk.LEFT, padx=(0, 1))
+        ttk.Button(rule_btn_frame, text="\u25bc", width=3, command=lambda: self._reorder_rule(1)).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(rule_btn_frame, text="현재 창 일괄 캡처", command=self._capture_all_windows).pack(side=tk.LEFT)
+
+        # ── 하단: 확인/취소 ──
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=4, column=0, columnspan=4, pady=(10, 0))
+        ttk.Button(btn_frame, text="확인", command=self._on_ok).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="취소", command=self.destroy).pack(side=tk.LEFT, padx=5)
+
+        # 기존 데이터 로드
+        if profile:
+            self.ent_name.insert(0, profile["name"])
+            self.ent_exe.insert(0, profile["exe_name"])
+            self.var_enabled.set(bool(profile.get("enabled", 1)))
+            trigger = profile.get("trigger_mode", "monitor_change")
+            self.var_trigger.set(self._TRIGGER_KEYS.get(trigger, "듀얼모니터 감지"))
+            self.rules_data = db_fetch_rules(profile["id"])
+        self._refresh_rules_tree()
+
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.transient(parent)
+        self.update_idletasks()
+        pw = parent.winfo_width()
+        ph = parent.winfo_height()
+        px = parent.winfo_x()
+        py = parent.winfo_y()
+        dw = self.winfo_width()
+        dh = self.winfo_height()
+        self.geometry(f"+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
+        self.ent_name.focus_set()
+
+    def _refresh_rules_tree(self):
+        for item in self.rule_tree.get_children():
+            self.rule_tree.delete(item)
+        for idx, r in enumerate(self.rules_data):
+            mode = r.get("move_mode", "custom")
+            mode_str = self._MODE_DISPLAY.get(mode, mode)
+            x, y = r.get("target_x", 0), r.get("target_y", 0)
+            w, h = r.get("target_w", 0), r.get("target_h", 0)
+            if mode in ("custom", "save_position") and (x or y or w or h):
+                size = f" {w}x{h}" if w and h else ""
+                mode_str += f" ({x},{y}{size})"
+            max_mark = "O" if r.get("maximize", 0) else ""
+            cls = r.get("window_class", "") or "(전체)"
+            title = r.get("title_pattern", "") or "(전체)"
+            self.rule_tree.insert("", tk.END, iid=str(idx), values=(cls, title, mode_str, max_mark))
+
+    def _get_selected_rule_idx(self):
+        sel = self.rule_tree.selection()
+        if not sel:
+            return None
+        return int(sel[0])
+
+    def _add_rule(self):
+        exe = self.ent_exe.get().strip()
+        dlg = RuleEditDialog(self, exe_name=exe)
+        self.wait_window(dlg)
+        if dlg.result:
+            self.rules_data.append(dlg.result)
+            self._refresh_rules_tree()
+
+    def _edit_rule(self):
+        idx = self._get_selected_rule_idx()
+        if idx is None:
+            messagebox.showinfo("알림", "규칙을 선택하세요.", parent=self)
+            return
+        exe = self.ent_exe.get().strip()
+        dlg = RuleEditDialog(self, rule=self.rules_data[idx], exe_name=exe)
+        self.wait_window(dlg)
+        if dlg.result:
+            dlg.result["id"] = self.rules_data[idx].get("id")
+            self.rules_data[idx] = dlg.result
+            self._refresh_rules_tree()
+
+    def _delete_rule(self):
+        idx = self._get_selected_rule_idx()
+        if idx is None:
+            return
+        self.rules_data.pop(idx)
+        self._refresh_rules_tree()
+
+    def _reorder_rule(self, direction):
+        idx = self._get_selected_rule_idx()
+        if idx is None:
+            return
+        new_idx = idx + direction
+        if new_idx < 0 or new_idx >= len(self.rules_data):
+            return
+        self.rules_data[idx], self.rules_data[new_idx] = self.rules_data[new_idx], self.rules_data[idx]
+        self._refresh_rules_tree()
+        self.rule_tree.selection_set(str(new_idx))
+
+    def _capture_all_windows(self):
+        """프로세스의 모든 visible 창 위치를 일괄 캡처하여 규칙 생성"""
+        exe_name = self.ent_exe.get().strip().lower()
+        if not exe_name:
+            messagebox.showwarning("입력 오류", "프로세스명을 먼저 입력하세요.", parent=self)
+            return
+
+        windows = _enumerate_process_windows(exe_name)
+        if not windows:
+            messagebox.showinfo("알림", f"{exe_name} 실행중인 창을 찾을 수 없습니다.", parent=self)
+            return
+
+        if self.rules_data:
+            if not messagebox.askyesno("확인", f"{len(windows)}개 창이 발견되었습니다.\n"
+                                       "기존 규칙을 모두 교체하시겠습니까?", parent=self):
+                return
+
+        self.rules_data = []
+        for w in windows:
+            self.rules_data.append({
+                "id": None,
+                "window_class": w["class_name"],
+                "title_pattern": w["title"],
+                "move_mode": "custom",
+                "target_x": w["x"], "target_y": w["y"],
+                "target_w": w["w"], "target_h": w["h"],
+                "maximize": 0,
+            })
+        self._refresh_rules_tree()
+        messagebox.showinfo("완료", f"{len(windows)}개 창 규칙이 캡처되었습니다.", parent=self)
+
+    def _on_ok(self):
+        name = self.ent_name.get().strip()
+        exe_name = self.ent_exe.get().strip()
+        if not name or not exe_name:
+            messagebox.showwarning("입력 오류", "이름과 프로세스명을 입력하세요.", parent=self)
+            return
+        trigger = self._TRIGGER_LABELS.get(self.var_trigger.get(), "monitor_change")
+        self.result = {
+            "id": self.profile.get("id") if self.profile else None,
+            "name": name,
+            "exe_name": exe_name,
+            "enabled": self.var_enabled.get(),
+            "trigger_mode": trigger,
+            "rules": self.rules_data,
         }
         self.destroy()
 
@@ -1625,12 +2017,14 @@ class AutoExecApp:
         self._booting_pcs = set()  # WOL 부팅중인 pc ID (중복 방지)
         self._last_monitor_count = ctypes.windll.user32.GetSystemMetrics(80)  # SM_CMONITORS
         self._monitor_check_counter = 0
+        self._process_check_counter = 0
+        self._profile_moved_pids: dict[int, set[int]] = {}  # profile_id → 이동 완료된 PID set
 
         self._build_ui()
         self._restore_window()
         self._refresh_pc_list()
         self._refresh_task_list()
-        self._refresh_move_list()
+        self._refresh_profile_list()
         self._tick()
         # 트레이 아이콘은 mainloop 진입 후 생성 (윈도우 준비 완료 후)
         self.root.after(500, self._setup_tray)
@@ -1712,7 +2106,7 @@ class AutoExecApp:
         mid_frame.columnconfigure(0, weight=1)
         mid_frame.rowconfigure(0, weight=1)
 
-        lf_move = ttk.LabelFrame(mid_frame, text="창 이동 대상 (듀얼 모니터 감지 시)", padding=5)
+        lf_move = ttk.LabelFrame(mid_frame, text="창 배치 프로파일", padding=5)
         lf_move.grid(row=0, column=0, sticky=tk.NSEW, padx=(0, 4))
         lf_move.columnconfigure(0, weight=1)
         lf_move.rowconfigure(0, weight=1)
@@ -1722,30 +2116,32 @@ class AutoExecApp:
         move_frame.columnconfigure(0, weight=1)
         move_frame.rowconfigure(0, weight=1)
 
-        move_cols = ("사용", "이름", "프로세스명", "이동위치")
-        self.move_tree = ttk.Treeview(move_frame, columns=move_cols, show="headings", height=4)
-        self.move_tree.heading("사용", text="사용")
-        self.move_tree.heading("이름", text="이름")
-        self.move_tree.heading("프로세스명", text="프로세스명")
-        self.move_tree.heading("이동위치", text="이동 위치")
-        self.move_tree.column("사용", width=40, anchor=tk.CENTER)
-        self.move_tree.column("이름", width=130)
-        self.move_tree.column("프로세스명", width=110)
-        self.move_tree.column("이동위치", width=150)
-        self.move_tree.grid(row=0, column=0, sticky=tk.NSEW)
-        move_scroll = ttk.Scrollbar(move_frame, orient=tk.VERTICAL, command=self.move_tree.yview)
+        prof_cols = ("사용", "이름", "프로세스명", "트리거", "규칙수")
+        self.profile_tree = ttk.Treeview(move_frame, columns=prof_cols, show="headings", height=4)
+        self.profile_tree.heading("사용", text="사용")
+        self.profile_tree.heading("이름", text="이름")
+        self.profile_tree.heading("프로세스명", text="프로세스명")
+        self.profile_tree.heading("트리거", text="트리거")
+        self.profile_tree.heading("규칙수", text="규칙")
+        self.profile_tree.column("사용", width=40, anchor=tk.CENTER)
+        self.profile_tree.column("이름", width=100)
+        self.profile_tree.column("프로세스명", width=100)
+        self.profile_tree.column("트리거", width=90)
+        self.profile_tree.column("규칙수", width=40, anchor=tk.CENTER)
+        self.profile_tree.grid(row=0, column=0, sticky=tk.NSEW)
+        move_scroll = ttk.Scrollbar(move_frame, orient=tk.VERTICAL, command=self.profile_tree.yview)
         move_scroll.grid(row=0, column=1, sticky=tk.NS)
-        self.move_tree.config(yscrollcommand=move_scroll.set)
-        self.move_tree.bind("<Double-1>", self._on_move_double_click)
+        self.profile_tree.config(yscrollcommand=move_scroll.set)
+        self.profile_tree.bind("<Double-1>", self._on_profile_double_click)
 
         move_btn_frame = ttk.Frame(lf_move)
         move_btn_frame.grid(row=1, column=0, sticky=tk.W, pady=(3, 0))
-        ttk.Button(move_btn_frame, text="추가", width=6, command=self._add_move_target).pack(side=tk.LEFT, padx=(0, 3))
-        ttk.Button(move_btn_frame, text="편집", width=6, command=self._edit_move_target).pack(side=tk.LEFT, padx=(0, 3))
-        ttk.Button(move_btn_frame, text="삭제", width=6, command=self._delete_move_target).pack(side=tk.LEFT, padx=(0, 3))
-        ttk.Button(move_btn_frame, text="이동", width=6, command=self._manual_move_target).pack(side=tk.LEFT, padx=(0, 3))
-        ttk.Button(move_btn_frame, text="\u25b2", width=3, command=lambda: self._reorder_move_target(-1)).pack(side=tk.LEFT, padx=(0, 1))
-        ttk.Button(move_btn_frame, text="\u25bc", width=3, command=lambda: self._reorder_move_target(1)).pack(side=tk.LEFT)
+        ttk.Button(move_btn_frame, text="추가", width=6, command=self._add_profile).pack(side=tk.LEFT, padx=(0, 3))
+        ttk.Button(move_btn_frame, text="편집", width=6, command=self._edit_profile).pack(side=tk.LEFT, padx=(0, 3))
+        ttk.Button(move_btn_frame, text="삭제", width=6, command=self._delete_profile).pack(side=tk.LEFT, padx=(0, 3))
+        ttk.Button(move_btn_frame, text="이동", width=6, command=self._manual_move_profile).pack(side=tk.LEFT, padx=(0, 3))
+        ttk.Button(move_btn_frame, text="\u25b2", width=3, command=lambda: self._reorder_profile(-1)).pack(side=tk.LEFT, padx=(0, 1))
+        ttk.Button(move_btn_frame, text="\u25bc", width=3, command=lambda: self._reorder_profile(1)).pack(side=tk.LEFT)
 
         # ── PC 관리 (우측, 고정 폭) ──
         lf_pc = ttk.LabelFrame(mid_frame, text="PC 관리", padding=5)
@@ -2211,172 +2607,175 @@ class AutoExecApp:
         startup = os.path.join(os.getenv("APPDATA", ""), "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
         os.startfile(startup)
 
-    # ─── 창 이동 대상 관리 ─────────────────────────────────
-    _MOVE_MODE_DISPLAY = {"sub_monitor": "서브 모니터", "save_position": "저장 위치", "custom": "좌표 직접"}
+    # ─── 창 배치 프로파일 관리 ─────────────────────────────
+    _TRIGGER_DISPLAY = {"monitor_change": "듀얼모니터", "process_start": "프로세스", "both": "둘 다"}
 
-    def _refresh_move_list(self):
-        self.move_data = db_fetch_move_targets()
-        for item in self.move_tree.get_children():
-            self.move_tree.delete(item)
-        for t in self.move_data:
-            enabled_mark = "O" if t.get("enabled", 1) else ""
-            mode = t.get("move_mode", "sub_monitor")
-            mode_display = self._MOVE_MODE_DISPLAY.get(mode) or str(mode)
-            if mode in ("custom", "save_position"):
-                x, y = t.get("target_x", 0), t.get("target_y", 0)
-                w, h = t.get("target_w", 0), t.get("target_h", 0)
-                if x or y or w or h:
-                    size = f" {w}x{h}" if w and h else ""
-                    mode_display += f" ({x},{y}{size})"
-            self.move_tree.insert("", tk.END, iid=str(t["id"]),
-                                  values=(enabled_mark, t["name"], t["exe_name"], mode_display))
+    def _refresh_profile_list(self):
+        self.profile_data = db_fetch_profiles()
+        for item in self.profile_tree.get_children():
+            self.profile_tree.delete(item)
+        for p in self.profile_data:
+            enabled_mark = "O" if p.get("enabled", 1) else ""
+            trigger = self._TRIGGER_DISPLAY.get(p.get("trigger_mode", "monitor_change"), "")
+            rule_count = db_count_rules(p["id"])
+            self.profile_tree.insert("", tk.END, iid=str(p["id"]),
+                                     values=(enabled_mark, p["name"], p["exe_name"], trigger, rule_count))
 
-    def _get_selected_move_target(self):
-        sel = self.move_tree.selection()
+    def _get_selected_profile(self):
+        sel = self.profile_tree.selection()
         if not sel:
-            messagebox.showinfo("알림", "이동 대상을 선택하세요.", parent=self.root)
+            messagebox.showinfo("알림", "프로파일을 선택하세요.", parent=self.root)
             return None
-        target_id = int(sel[0])
-        for t in self.move_data:
-            if t["id"] == target_id:
-                return t
+        profile_id = int(sel[0])
+        for p in self.profile_data:
+            if p["id"] == profile_id:
+                return p
         return None
 
-    def _add_move_target(self):
-        dlg = MoveTargetEditDialog(self.root)
+    def _add_profile(self):
+        dlg = ProfileEditDialog(self.root)
         self.root.wait_window(dlg)
         if dlg.result:
             r = dlg.result
-            db_upsert_move_target(None, r["name"], r["exe_name"], r["enabled"], r["move_mode"],
-                                  r["target_x"], r["target_y"], r["target_w"], r["target_h"], r["maximize"])
-            self._refresh_move_list()
-            self.log(f"[이동대상] 추가: {r['name']} ({r['exe_name']})")
+            pid = db_upsert_profile(None, r["name"], r["exe_name"], r["enabled"], r["trigger_mode"])
+            db_replace_rules(pid, r["rules"])
+            self._refresh_profile_list()
+            self.log(f"[프로파일] 추가: {r['name']} ({r['exe_name']})")
 
-    def _edit_move_target(self):
-        target = self._get_selected_move_target()
-        if not target:
+    def _edit_profile(self):
+        profile = self._get_selected_profile()
+        if not profile:
             return
-        dlg = MoveTargetEditDialog(self.root, target)
+        dlg = ProfileEditDialog(self.root, profile)
         self.root.wait_window(dlg)
         if dlg.result:
             r = dlg.result
-            db_upsert_move_target(r["id"], r["name"], r["exe_name"], r["enabled"], r["move_mode"],
-                                  r["target_x"], r["target_y"], r["target_w"], r["target_h"], r["maximize"])
-            self._refresh_move_list()
-            self.log(f"[이동대상] 수정: {r['name']} ({r['exe_name']})")
+            db_upsert_profile(r["id"], r["name"], r["exe_name"], r["enabled"], r["trigger_mode"])
+            db_replace_rules(r["id"], r["rules"])
+            self._refresh_profile_list()
+            self.log(f"[프로파일] 수정: {r['name']} ({r['exe_name']})")
 
-    def _delete_move_target(self):
-        target = self._get_selected_move_target()
-        if not target:
+    def _delete_profile(self):
+        profile = self._get_selected_profile()
+        if not profile:
             return
-        if messagebox.askyesno("삭제 확인", f"'{target['name']}' 이동 대상을 삭제하시겠습니까?", parent=self.root):
-            db_delete_move_target(target["id"])
-            self._refresh_move_list()
-            self.log(f"[이동대상] 삭제: {target['name']}")
+        if messagebox.askyesno("삭제 확인", f"'{profile['name']}' 프로파일을 삭제하시겠습니까?", parent=self.root):
+            db_delete_profile(profile["id"])
+            self._refresh_profile_list()
+            self.log(f"[프로파일] 삭제: {profile['name']}")
 
-    def _reorder_move_target(self, direction):
-        sel = self.move_tree.selection()
+    def _reorder_profile(self, direction):
+        sel = self.profile_tree.selection()
         if not sel:
             return
-        target_id = int(sel[0])
-        idx = next((i for i, t in enumerate(self.move_data) if t["id"] == target_id), None)
+        profile_id = int(sel[0])
+        idx = next((i for i, p in enumerate(self.profile_data) if p["id"] == profile_id), None)
         if idx is None:
             return
         new_idx = idx + direction
-        if new_idx < 0 or new_idx >= len(self.move_data):
+        if new_idx < 0 or new_idx >= len(self.profile_data):
             return
-        db_swap_sort_order("move_targets", self.move_data[idx]["id"], self.move_data[new_idx]["id"])
-        self._refresh_move_list()
-        new_iid = str(target_id)
-        if self.move_tree.exists(new_iid):
-            self.move_tree.selection_set(new_iid)
-            self.move_tree.see(new_iid)
+        db_swap_sort_order("window_profiles", self.profile_data[idx]["id"], self.profile_data[new_idx]["id"])
+        self._refresh_profile_list()
+        new_iid = str(profile_id)
+        if self.profile_tree.exists(new_iid):
+            self.profile_tree.selection_set(new_iid)
+            self.profile_tree.see(new_iid)
 
-    def _on_move_double_click(self, event):
+    def _on_profile_double_click(self, event):
         """더블클릭: 해당 프로세스 창을 포그라운드로 활성화"""
-        item = self.move_tree.identify_row(event.y)
+        item = self.profile_tree.identify_row(event.y)
         if not item:
             return
-        target_id = int(item)
-        target = next((t for t in self.move_data if t["id"] == target_id), None)
-        if not target:
+        profile_id = int(item)
+        profile = next((p for p in self.profile_data if p["id"] == profile_id), None)
+        if not profile:
             return
-        exe_name = target["exe_name"]
+        exe_name = profile["exe_name"]
         if self._activate_window_by_exe(exe_name):
-            self.log(f"[이동대상] {target['name']} 창 활성화")
+            self.log(f"[프로파일] {profile['name']} 창 활성화")
         else:
-            self.log(f"[이동대상] {target['name']} ({exe_name}) 실행중인 창 없음")
+            self.log(f"[프로파일] {profile['name']} ({exe_name}) 실행중인 창 없음")
 
-    def _manual_move_target(self):
-        """선택한 이동 대상의 창을 지정 위치로 즉시 이동"""
-        target = self._get_selected_move_target()
-        if not target:
+    def _manual_move_profile(self):
+        """선택한 프로파일의 규칙에 따라 창을 즉시 이동"""
+        profile = self._get_selected_profile()
+        if not profile:
             return
-        exe_name = target["exe_name"].lower()
-        move_mode = target.get("move_mode", "sub_monitor")
-        maximize = target.get("maximize", 1)
+        rules = db_fetch_rules(profile["id"])
+        if not rules:
+            self.log(f"[프로파일] {profile['name']} 규칙 없음")
+            return
 
         def _do_move():
-            hwnds = self._find_windows_by_exe(exe_name)
-            if not hwnds:
-                self.log(f"[이동대상] {target['name']} ({exe_name}) 실행중인 창 없음")
-                return
-
-            tx = ty = tw = th = 0
-            if move_mode == "sub_monitor":
-                monitors = self._get_monitors_info()
-                sub = None
-                for m in monitors:
-                    if not m[4]:
-                        sub = m
-                        break
-                if not sub:
-                    self.log("[이동대상] 서브 모니터를 찾을 수 없음")
-                    return
-                tx, ty, tw, th = sub[:4]
-            elif move_mode in ("custom", "save_position"):
-                tx = target.get("target_x", 0)
-                ty = target.get("target_y", 0)
-                tw = target.get("target_w", 0)
-                th = target.get("target_h", 0)
-
-            moved = 0
-            for hwnd in hwnds:
-                try:
-                    if ctypes.windll.user32.IsIconic(hwnd):
-                        continue  # 최소화 상태면 건너뜀
-                    if move_mode == "sub_monitor":
-                        ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-                        time.sleep(0.1)
-                        ctypes.windll.user32.SetWindowPos(
-                            hwnd, 0, tx + 100, ty + 100, tw - 200, th - 200, 0x0004
-                        )
-                        if maximize:
-                            time.sleep(0.1)
-                            ctypes.windll.user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE
-                    else:  # custom, save_position
-                        ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-                        time.sleep(0.1)
-                        if tw > 0 and th > 0:
-                            ctypes.windll.user32.SetWindowPos(
-                                hwnd, 0, tx, ty, tw, th, 0x0004
-                            )
-                        else:
-                            rect = ctypes.wintypes.RECT()
-                            ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
-                            cw = rect.right - rect.left
-                            ch = rect.bottom - rect.top
-                            ctypes.windll.user32.SetWindowPos(
-                                hwnd, 0, tx, ty, cw, ch, 0x0004
-                            )
-                    moved += 1
-                except Exception:
-                    pass
-
-            mode_str = self._MOVE_MODE_DISPLAY.get(move_mode, move_mode)
-            self.log(f"[이동대상] {target['name']} {moved}개 창 → {mode_str} 이동 완료")
+            moved = self._apply_profile_rules(profile, rules)
+            self.log(f"[프로파일] {profile['name']} {moved}개 창 이동 완료")
 
         threading.Thread(target=_do_move, daemon=True).start()
+
+    def _apply_profile_rules(self, profile, rules, sub_monitor_info=None):
+        """프로파일의 규칙에 따라 창 이동. 반환: 이동된 창 수."""
+        exe_name = profile["exe_name"].lower()
+        windows = _enumerate_process_windows(exe_name)
+        if not windows:
+            return 0
+
+        # 서브 모니터 정보 (필요 시)
+        sub = sub_monitor_info
+        if sub is None:
+            for rule in rules:
+                if rule.get("move_mode") == "sub_monitor":
+                    monitors = self._get_monitors_info()
+                    for m in monitors:
+                        if not m[4]:
+                            sub = m
+                            break
+                    break
+
+        moved = 0
+        user32 = ctypes.windll.user32
+        for w in windows:
+            rule = _match_window_to_rules(w["class_name"], w["title"], rules)
+            if not rule:
+                continue
+            hwnd = w["hwnd"]
+            try:
+                if user32.IsIconic(hwnd):
+                    continue
+                move_mode = rule.get("move_mode", "custom")
+                maximize = rule.get("maximize", 0)
+                if move_mode == "sub_monitor":
+                    if not sub:
+                        continue
+                    tx, ty, tw, th = sub[:4]
+                    user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                    time.sleep(0.1)
+                    user32.SetWindowPos(hwnd, 0, tx + 100, ty + 100, tw - 200, th - 200, 0x0004)
+                    if maximize:
+                        time.sleep(0.1)
+                        user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE
+                else:  # custom, save_position
+                    tx = rule.get("target_x", 0)
+                    ty = rule.get("target_y", 0)
+                    tw = rule.get("target_w", 0)
+                    th = rule.get("target_h", 0)
+                    user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                    time.sleep(0.1)
+                    if tw > 0 and th > 0:
+                        user32.SetWindowPos(hwnd, 0, tx, ty, tw, th, 0x0004)
+                    else:
+                        rect = ctypes.wintypes.RECT()
+                        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+                        cw = rect.right - rect.left
+                        ch = rect.bottom - rect.top
+                        user32.SetWindowPos(hwnd, 0, tx, ty, cw, ch, 0x0004)
+                    if maximize:
+                        time.sleep(0.1)
+                        user32.ShowWindow(hwnd, 3)
+                moved += 1
+            except Exception:
+                pass
+        return moved
 
     def _move_explorer_window(self, folder_name, tx, ty, tw, th):
         """폴더명으로 탐색기 창을 찾아 지정 위치로 이동"""
@@ -2676,6 +3075,9 @@ class AutoExecApp:
         # 듀얼 모니터 감지 (3초마다)
         self._check_monitor_change()
 
+        # 프로세스 감지 (3초마다)
+        self._check_process_profiles()
+
         self.root.after(1000, self._tick)
 
     def _is_closed_day(self, dt):
@@ -2922,7 +3324,7 @@ class AutoExecApp:
 
         threading.Thread(target=_run, daemon=True).start()
 
-    # ─── 듀얼 모니터 감지 → 브라우저 이동 ─────────────────
+    # ─── 듀얼 모니터 감지 + 프로세스 감지 ─────────────────
     def _check_monitor_change(self):
         """모니터 수 변화 감지 (3초 주기)"""
         self._monitor_check_counter += 1
@@ -2935,8 +3337,64 @@ class AutoExecApp:
         self._last_monitor_count = count
 
         if prev <= 1 and count >= 2:
-            self.log("[모니터] 듀얼 모니터 감지 → 브라우저를 서브 모니터로 이동")
-            threading.Thread(target=self._move_browsers_to_sub_monitor, daemon=True).start()
+            self.log("[모니터] 듀얼 모니터 감지 → 프로파일 기반 창 이동")
+            threading.Thread(target=self._on_monitor_change, daemon=True).start()
+
+    def _check_process_profiles(self):
+        """프로세스 감지 트리거 (3초 주기)"""
+        self._process_check_counter += 1
+        if self._process_check_counter < 3:
+            return
+        self._process_check_counter = 0
+
+        profiles = db_fetch_profiles()
+        for profile in profiles:
+            if not profile.get("enabled", 1):
+                continue
+            trigger = profile.get("trigger_mode", "monitor_change")
+            if trigger not in ("process_start", "both"):
+                continue
+
+            exe_name = profile["exe_name"].lower()
+            profile_id = profile["id"]
+
+            # 해당 프로세스의 현재 PID 집합 획득
+            current_pids = set()
+            try:
+                result = subprocess.run(
+                    ["tasklist", "/fi", f"imagename eq {exe_name}", "/fo", "csv", "/nh"],
+                    capture_output=True, text=True, timeout=5,
+                    creationflags=0x08000000,
+                )
+                for line in result.stdout.splitlines():
+                    parts = line.strip().strip('"').split('","')
+                    if len(parts) >= 2:
+                        try:
+                            current_pids.add(int(parts[1]))
+                        except ValueError:
+                            pass
+            except Exception:
+                continue
+
+            if not current_pids:
+                # 프로세스 종료 시 PID 기록 초기화
+                self._profile_moved_pids.pop(profile_id, None)
+                continue
+
+            moved_pids = self._profile_moved_pids.setdefault(profile_id, set())
+            # 종료된 PID 정리
+            moved_pids &= current_pids
+            # 새 PID 발견
+            new_pids = current_pids - moved_pids
+            if new_pids:
+                rules = db_fetch_rules(profile_id)
+                if rules:
+                    def _do_move(p=profile, r=rules):
+                        time.sleep(3)  # 프로세스 초기화 대기
+                        moved = self._apply_profile_rules(p, r)
+                        self.log(f"[프로세스감지] {p['name']} {moved}개 창 이동 완료")
+                    threading.Thread(target=_do_move, daemon=True).start()
+                moved_pids |= new_pids
 
     def _get_monitors_info(self):
         """모니터 정보 반환: [(x, y, w, h, is_primary), ...]"""
@@ -2969,40 +3427,8 @@ class AutoExecApp:
         ctypes.windll.user32.EnumDisplayMonitors(None, None, MONITORENUMPROC(callback), 0)
         return monitors
 
-    def _find_movable_windows(self):
-        """DB에 등록된 이동 대상(사용 중)의 창 핸들 목록 반환"""
-        targets = db_fetch_move_targets()
-        if not targets:
-            return []
-        target_exes = {t["exe_name"].lower() for t in targets if t.get("enabled", 1)}
-        hwnds = []
-
-        def enum_callback(hwnd, lParam):
-            if not ctypes.windll.user32.IsWindowVisible(hwnd):
-                return True
-            if ctypes.windll.user32.GetWindowTextLengthW(hwnd) == 0:
-                return True
-            pid = ctypes.wintypes.DWORD()
-            ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-            handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid.value)
-            if handle:
-                try:
-                    buf = ctypes.create_unicode_buffer(260)
-                    size = ctypes.wintypes.DWORD(260)
-                    if ctypes.windll.kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
-                        exe_name = os.path.basename(buf.value).lower()
-                        if exe_name in target_exes:
-                            hwnds.append(hwnd)
-                finally:
-                    ctypes.windll.kernel32.CloseHandle(handle)
-            return True
-
-        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
-        ctypes.windll.user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
-        return hwnds
-
-    def _move_browsers_to_sub_monitor(self):
-        """DB 등록 대상을 각자 설정된 위치로 이동"""
+    def _on_monitor_change(self):
+        """듀얼 모니터 감지 시 trigger_mode이 monitor_change/both인 프로파일 실행"""
         try:
             time.sleep(2)  # 모니터 인식 안정화 대기
 
@@ -3013,66 +3439,25 @@ class AutoExecApp:
                     sub = m
                     break
 
-            targets = db_fetch_move_targets()
-            if not targets:
-                self.log("[모니터] 등록된 이동 대상 없음")
+            profiles = db_fetch_profiles()
+            if not profiles:
+                self.log("[모니터] 등록된 프로파일 없음")
                 return
 
-            moved = 0
-            for target in targets:
-                if not target.get("enabled", 1):
+            total_moved = 0
+            for profile in profiles:
+                if not profile.get("enabled", 1):
                     continue
-                exe_name = target["exe_name"].lower()
-                move_mode = target.get("move_mode", "sub_monitor")
-                maximize = target.get("maximize", 1)
-                hwnds = self._find_windows_by_exe(exe_name)
-                if not hwnds:
+                trigger = profile.get("trigger_mode", "monitor_change")
+                if trigger not in ("monitor_change", "both"):
                     continue
+                rules = db_fetch_rules(profile["id"])
+                if not rules:
+                    continue
+                moved = self._apply_profile_rules(profile, rules, sub_monitor_info=sub)
+                total_moved += moved
 
-                tx = ty = tw = th = 0
-                if move_mode == "sub_monitor":
-                    if not sub:
-                        continue
-                    tx, ty, tw, th = sub[:4]
-                elif move_mode in ("custom", "save_position"):
-                    tx = target.get("target_x", 0)
-                    ty = target.get("target_y", 0)
-                    tw = target.get("target_w", 0)
-                    th = target.get("target_h", 0)
-
-                for hwnd in hwnds:
-                    try:
-                        if ctypes.windll.user32.IsIconic(hwnd):
-                            continue  # 최소화 상태면 건너뜀
-                        if move_mode == "sub_monitor":
-                            ctypes.windll.user32.ShowWindow(hwnd, 9)
-                            time.sleep(0.1)
-                            ctypes.windll.user32.SetWindowPos(
-                                hwnd, 0, tx + 100, ty + 100, tw - 200, th - 200, 0x0004
-                            )
-                            if maximize:
-                                time.sleep(0.1)
-                                ctypes.windll.user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE
-                        else:  # custom, save_position
-                            ctypes.windll.user32.ShowWindow(hwnd, 9)
-                            time.sleep(0.1)
-                            if tw > 0 and th > 0:
-                                ctypes.windll.user32.SetWindowPos(
-                                    hwnd, 0, tx, ty, tw, th, 0x0004
-                                )
-                            else:
-                                rect = ctypes.wintypes.RECT()
-                                ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
-                                cw = rect.right - rect.left
-                                ch = rect.bottom - rect.top
-                                ctypes.windll.user32.SetWindowPos(
-                                    hwnd, 0, tx, ty, cw, ch, 0x0004
-                                )
-                        moved += 1
-                    except Exception:
-                        pass
-
-            self.log(f"[모니터] {moved}개 창 이동 완료")
+            self.log(f"[모니터] {total_moved}개 창 이동 완료")
         except Exception as e:
             self.log(f"[모니터] 창 이동 실패: {e}")
 
