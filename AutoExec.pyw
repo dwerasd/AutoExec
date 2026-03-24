@@ -1559,7 +1559,7 @@ class ProfileEditDialog(tk.Toplevel):
             self.rule_tree.delete(item)
         for idx, r in enumerate(self.rules_data):
             mode = r.get("move_mode", "custom")
-            mode_str = self._MODE_DISPLAY.get(mode, mode)
+            mode_str = self._MODE_DISPLAY.get(mode, mode) or mode
             x, y = r.get("target_x", 0), r.get("target_y", 0)
             w, h = r.get("target_w", 0), r.get("target_h", 0)
             if mode in ("custom", "save_position") and (x or y or w or h):
@@ -2515,20 +2515,16 @@ class AutoExecApp:
         if os.path.isdir(executable):
             self._open_folder_task(task)
             return
-        # 1) AutoExec이 실행한 프로세스 → PID로 창 활성화
+        # AutoExec이 실행한 프로세스 → PID로 창 활성화 (빠름)
         if task_id in self._running_tasks:
             proc = self._task_processes.get(task_id)
             if proc and proc.poll() is None and self._activate_window_by_pid(proc.pid):
                 self.log(f"[자동실행] {task['name']} 창 활성화")
                 return
-        # 2) 외부에서 실행중인 프로세스 → exe/스크립트명으로 창 활성화
-        if self._activate_window_by_exe(os.path.basename(executable)):
-            self.log(f"[자동실행] {task['name']} 창 활성화")
-            return
         if task["enabled"]:
             self._edit_task()
         else:
-            self._run_task()
+            self._run_task(skip_activation=True)
 
     def _on_task_right_click(self, event):
         """우클릭: 컨텍스트 메뉴 표시"""
@@ -3004,7 +3000,7 @@ class AutoExecApp:
                 messagebox.showerror("GitHub 다운로드 실패", output[:500], parent=self.root)
         self.git_url_entry.focus_set()
 
-    def _run_task(self):
+    def _run_task(self, skip_activation=False):
         """선택한 자동실행 작업을 즉시 테스트 실행 (폴더면 열기, 실행중이면 활성화)"""
         task = self._get_selected_task()
         if not task:
@@ -3012,16 +3008,17 @@ class AutoExecApp:
         if os.path.isdir(task["executable"]):
             self._open_folder_task(task)
             return
-        # 이미 실행중인 창이 있으면 활성화
-        task_id = task["id"]
-        if task_id in self._running_tasks:
-            proc = self._task_processes.get(task_id)
-            if proc and proc.poll() is None and self._activate_window_by_pid(proc.pid):
+        if not skip_activation:
+            # 이미 실행중인 창이 있으면 활성화
+            task_id = task["id"]
+            if task_id in self._running_tasks:
+                proc = self._task_processes.get(task_id)
+                if proc and proc.poll() is None and self._activate_window_by_pid(proc.pid):
+                    self.log(f"[자동실행] {task['name']} 창 활성화")
+                    return
+            if self._activate_window_by_exe(os.path.basename(task["executable"])):
                 self.log(f"[자동실행] {task['name']} 창 활성화")
                 return
-        if self._activate_window_by_exe(os.path.basename(task["executable"])):
-            self.log(f"[자동실행] {task['name']} 창 활성화")
-            return
         repeat_mode = task.get("repeat_mode", "once")
         if repeat_mode == "once":
             run_stamp = datetime.now().strftime("%Y-%m-%d")
