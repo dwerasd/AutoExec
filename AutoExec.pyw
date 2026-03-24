@@ -2148,20 +2148,16 @@ class AutoExecApp:
         lf_pc.grid(row=0, column=1, sticky=tk.NSEW)
         lf_pc.rowconfigure(0, weight=1)
 
-        self.pc_listbox = tk.Listbox(lf_pc, height=6, width=14, font=("Consolas", 10))
+        self.pc_listbox = tk.Listbox(lf_pc, height=6, width=14, font=("Consolas", 10), activestyle="none")
         self.pc_listbox.grid(row=0, column=0, sticky=tk.NSEW)
         pc_scroll = ttk.Scrollbar(lf_pc, orient=tk.VERTICAL, command=self.pc_listbox.yview)
         pc_scroll.grid(row=0, column=1, sticky=tk.NS)
         self.pc_listbox.config(yscrollcommand=pc_scroll.set)
-
-        pc_side_frame = ttk.Frame(lf_pc)
-        pc_side_frame.grid(row=0, column=2, sticky=tk.N, padx=(3, 0))
-        ttk.Button(pc_side_frame, text="편집", width=5, command=self._edit_pc).pack(pady=1)
-        ttk.Button(pc_side_frame, text="부팅", width=5, command=self._boot_pc).pack(pady=1)
-        ttk.Button(pc_side_frame, text="핑", width=5, command=self._ping_pc).pack(pady=1)
+        self.pc_listbox.bind("<Double-1>", lambda e: self._boot_pc())
+        self.pc_listbox.bind("<Button-3>", self._on_pc_right_click)
 
         pc_btn_frame = ttk.Frame(lf_pc)
-        pc_btn_frame.grid(row=1, column=0, columnspan=3, sticky=tk.W, pady=(3, 0))
+        pc_btn_frame.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(3, 0))
         ttk.Button(pc_btn_frame, text="추가", width=5, command=self._add_pc).pack(side=tk.LEFT, padx=(0, 2))
         ttk.Button(pc_btn_frame, text="삭제", width=5, command=self._delete_pc).pack(side=tk.LEFT, padx=(0, 2))
         ttk.Button(pc_btn_frame, text="\u25b2", width=2, command=lambda: self._move_pc(-1)).pack(side=tk.LEFT, padx=(0, 1))
@@ -2322,6 +2318,19 @@ class AutoExecApp:
             db_upsert_pc(None, r["name"], r["ip"], r["mac"], r["auto_boot"], r["boot_start"], r["boot_end"], r["skip_holiday"])
             self._refresh_pc_list()
             self.log(f"PC 추가: {r['name']}")
+
+    def _on_pc_right_click(self, event):
+        """우클릭: PC 컨텍스트 메뉴"""
+        idx = self.pc_listbox.nearest(event.y)
+        if idx < 0:
+            return
+        self.pc_listbox.selection_clear(0, tk.END)
+        self.pc_listbox.selection_set(idx)
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="편집", command=self._edit_pc)
+        menu.add_command(label="부팅", command=self._boot_pc)
+        menu.add_command(label="핑", command=self._ping_pc)
+        menu.tk_popup(event.x_root, event.y_root)
 
     def _edit_pc(self):
         pc = self._get_selected_pc()
