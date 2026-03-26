@@ -2372,12 +2372,11 @@ class AutoExecApp:
         self.profile_tree.config(yscrollcommand=move_scroll.set)
         self.profile_tree.bind("<Double-1>", self._on_profile_double_click)
 
+        self.profile_tree.bind("<Button-3>", self._on_profile_right_click)
+
         move_btn_frame = ttk.Frame(lf_move)
         move_btn_frame.grid(row=1, column=0, sticky=tk.W, pady=(3, 0))
         ttk.Button(move_btn_frame, text="추가", width=6, command=self._add_profile).pack(side=tk.LEFT, padx=(0, 3))
-        ttk.Button(move_btn_frame, text="편집", width=6, command=self._edit_profile).pack(side=tk.LEFT, padx=(0, 3))
-        ttk.Button(move_btn_frame, text="삭제", width=6, command=self._delete_profile).pack(side=tk.LEFT, padx=(0, 3))
-        ttk.Button(move_btn_frame, text="이동", width=6, command=self._manual_move_profile).pack(side=tk.LEFT, padx=(0, 3))
         ttk.Button(move_btn_frame, text="\u25b2", width=3, command=lambda: self._reorder_profile(-1)).pack(side=tk.LEFT, padx=(0, 1))
         ttk.Button(move_btn_frame, text="\u25bc", width=3, command=lambda: self._reorder_profile(1)).pack(side=tk.LEFT)
 
@@ -3096,8 +3095,19 @@ class AutoExecApp:
             self.profile_tree.selection_set(new_iid)
             self.profile_tree.see(new_iid)
 
+    def _on_profile_right_click(self, event):
+        """우클릭: 프로파일 컨텍스트 메뉴"""
+        item = self.profile_tree.identify_row(event.y)
+        if not item:
+            return
+        self.profile_tree.selection_set(item)
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="편집", command=self._edit_profile)
+        menu.add_command(label="삭제", command=self._delete_profile)
+        menu.tk_popup(event.x_root, event.y_root)
+
     def _on_profile_double_click(self, event):
-        """더블클릭: 해당 프로세스 창을 포그라운드로 활성화"""
+        """더블클릭: 프로파일 규칙에 따라 창 이동"""
         item = self.profile_tree.identify_row(event.y)
         if not item:
             return
@@ -3105,11 +3115,16 @@ class AutoExecApp:
         profile = next((p for p in self.profile_data if p["id"] == profile_id), None)
         if not profile:
             return
-        exe_name = profile["exe_name"]
-        if self._activate_window_by_exe(exe_name):
-            self.log(f"[프로파일] {profile['name']} 창 활성화")
-        else:
-            self.log(f"[프로파일] {profile['name']} ({exe_name}) 실행중인 창 없음")
+        rules = db_fetch_rules(profile["id"])
+        if not rules:
+            self.log(f"[프로파일] {profile['name']} 규칙 없음")
+            return
+
+        def _do_move():
+            moved = self._apply_profile_rules(profile, rules)
+            self.log(f"[프로파일] {profile['name']} {moved}개 창 이동 완료")
+
+        threading.Thread(target=_do_move, daemon=True).start()
 
     def _manual_move_profile(self):
         """선택한 프로파일의 규칙에 따라 창을 즉시 이동"""
