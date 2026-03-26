@@ -2411,14 +2411,16 @@ class AutoExecApp:
         routine_frame.columnconfigure(0, weight=1)
         routine_frame.rowconfigure(0, weight=1)
 
-        rt_cols = ("내용", "날짜", "진행")
+        rt_cols = ("내용", "날짜", "진행", "완료시간")
         self.routine_tree = ttk.Treeview(routine_frame, columns=rt_cols, show="headings", height=8)
         self.routine_tree.heading("내용", text="내용")
         self.routine_tree.heading("날짜", text="날짜")
         self.routine_tree.heading("진행", text="진행")
+        self.routine_tree.heading("완료시간", text="완료시간")
         self.routine_tree.column("내용", width=150)
         self.routine_tree.column("날짜", width=100, anchor=tk.CENTER)
         self.routine_tree.column("진행", width=80, anchor=tk.CENTER)
+        self.routine_tree.column("완료시간", width=80, anchor=tk.CENTER)
         self.routine_tree.grid(row=0, column=0, sticky=tk.NSEW)
         rt_scroll = ttk.Scrollbar(routine_frame, orient=tk.VERTICAL, command=self.routine_tree.yview)
         rt_scroll.grid(row=0, column=1, sticky=tk.NS)
@@ -2589,8 +2591,9 @@ class AutoExecApp:
             progress = f"{done}/{total}"
             if done >= total:
                 progress = f"{done}/{total} ✓"
+            last_time = logs[-1]["done_time"] if logs else ""
             self.routine_tree.insert("", tk.END, iid=str(rt["id"]),
-                                     values=(rt["name"], active_date, progress))
+                                     values=(rt["name"], active_date, progress, last_time))
 
     def _get_selected_routine(self):
         sel = self.routine_tree.selection()
@@ -2942,6 +2945,7 @@ class AutoExecApp:
         self.task_tree.selection_set(item)
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label="실행", command=self._run_task)
+        menu.add_command(label="폴더 열기", command=self._open_task_folder)
         menu.add_command(label="편집", command=self._edit_task)
         menu.add_command(label="삭제", command=self._delete_task)
         menu.add_separator()
@@ -2993,6 +2997,25 @@ class AutoExecApp:
         if self.task_tree.exists(new_iid):
             self.task_tree.selection_set(new_iid)
             self.task_tree.see(new_iid)
+
+    def _open_task_folder(self):
+        """선택한 자동실행 항목의 경로를 탐색기로 열기"""
+        task = self._get_selected_task()
+        if not task:
+            return
+        executable = task["executable"]
+        if not executable:
+            return
+        path = os.path.normpath(executable)
+        if os.path.isdir(path):
+            subprocess.Popen(["explorer.exe", path])
+            self.log(f"[자동실행] 폴더 열기: {path}")
+        elif os.path.isfile(path):
+            folder = os.path.dirname(path)
+            subprocess.Popen(["explorer.exe", "/select,", path])
+            self.log(f"[자동실행] 폴더 열기: {folder}")
+        else:
+            messagebox.showinfo("알림", f"경로를 찾을 수 없습니다:\n{path}", parent=self.root)
 
     def _open_folder_task(self, task):
         """폴더 태스크를 열고 auto_move가 켜져 있고 위치 지정이 있으면 이동"""
