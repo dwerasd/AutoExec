@@ -160,6 +160,37 @@ def db_init():
             sort_order INTEGER NOT NULL DEFAULT 0
         )
     """)
+    # ── 과제 (루틴) 테이블 ──
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS routines (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL DEFAULT '',
+            daily_count INTEGER NOT NULL DEFAULT 1,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            start_date TEXT NOT NULL DEFAULT '',
+            repeat_type TEXT NOT NULL DEFAULT 'once',
+            sort_order INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    try:
+        cur.execute("ALTER TABLE routines ADD COLUMN start_date TEXT NOT NULL DEFAULT ''")
+    except Exception:
+        pass
+    # repeat_type: 'once'(1회) / 'daily'(매일)
+    try:
+        cur.execute("ALTER TABLE routines ADD COLUMN repeat_type TEXT NOT NULL DEFAULT 'once'")
+    except Exception:
+        pass
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS routine_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            routine_id INTEGER NOT NULL,
+            log_date TEXT NOT NULL,
+            seq INTEGER NOT NULL,
+            done_time TEXT NOT NULL DEFAULT '',
+            UNIQUE(routine_id, log_date, seq)
+        )
+    """)
     # move_targets → window_profiles + window_rules 마이그레이션
     try:
         cur.execute("SELECT COUNT(*) as cnt FROM window_profiles")
@@ -233,7 +264,7 @@ def db_delete_pc(pc_id):
 
 def db_swap_sort_order(table, id_a, id_b):
     """두 레코드의 sort_order를 교환"""
-    if table not in ("pcs", "tasks", "move_targets", "window_profiles", "window_rules"):
+    if table not in ("pcs", "tasks", "move_targets", "window_profiles", "window_rules", "routines"):
         return
     conn = get_db_connection()
     try:
@@ -244,6 +275,131 @@ def db_swap_sort_order(table, id_a, id_b):
             cur.execute(f"UPDATE [{table}] SET sort_order=? WHERE id=?", (rows[id_b], id_a))
             cur.execute(f"UPDATE [{table}] SET sort_order=? WHERE id=?", (rows[id_a], id_b))
         conn.commit()
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════
+#  과제 (루틴) DB 헬퍼
+# ═══════════════════════════════════════════════════════════
+def db_fetch_routines():
+    """과제 목록 조회"""
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM routines ORDER BY sort_order, id")
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def db_upsert_routine(routine_id, name, daily_count, enabled=1, start_date="", repeat_type="once"):
+    """과제 추가 또는 수정"""
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        if routine_id:
+            cur.execute(
+                "UPDATE routines SET name=?, daily_count=?, enabled=?, start_date=?, repeat_type=? WHERE id=?",
+                (name, daily_count, int(enabled), start_date, repeat_type, routine_id),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO routines (name, daily_count, enabled, start_date, repeat_type, sort_order) "
+                "VALUES (?,?,?,?,?, (SELECT IFNULL(MAX(sort_order),0)+1 FROM routines))",
+                (name, daily_count, int(enabled), start_date, repeat_type),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def db_delete_routine(routine_id):
+    """과제 삭제 (로그도 함께 삭제)"""
+    conn = get_db_connection()
+    try:
+        conn.execute("DELETE FROM routine_logs WHERE routine_id=?", (routine_id,))
+        conn.execute("DELETE FROM routines WHERE id=?", (routine_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def db_fetch_routine_logs(routine_id, log_date):
+    """특정 과제의 특정 날짜 완료 기록 조회"""
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM routine_logs WHERE routine_id=? AND log_date=? ORDER BY seq",
+            (routine_id, log_date),
+        )
+        return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def db_add_routine_log(routine_id, log_date, seq):
+    """과제 완료 기록 추가"""
+    conn = get_db_connection()
+    try:
+        now_str = datetime.now().strftime("%H:%M:%S")
+        conn.execute(
+            "INSERT OR IGNORE INTO routine_logs (routine_id, log_date, seq, done_time) "
+            "VALUES (?, ?, ?, ?)",
+            (routine_id, log_date, seq, now_str),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def db_remove_last_routine_log(routine_id, log_date):
+    """특정 과제의 특정 날짜 마지막 완료 기록 삭제"""
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id FROM routine_logs WHERE routine_id=? AND log_date=? ORDER BY seq DESC LIMIT 1",
+            (routine_id, log_date),
+        )
+        row = cur.fetchone()
+        if row:
+            conn.execute("DELETE FROM routine_logs WHERE id=?", (row["id"],))
+            conn.commit()
+            return True
+        return False
+    finally:
+        conn.close()
+
+
+def db_get_routine_active_date(routine_id, daily_count):
+    """과제의 활성 날짜를 반환. 전날 미완료 시 전날 날짜, 완료 시 오늘 날짜."""
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        # 어제 이전 미완료 날짜가 있는지 확인 (가장 오래된 미완료 날짜)
+        today_str = date.today().strftime("%Y-%m-%d")
+        # 오늘 이전의 모든 기록된 날짜 중 미완료인 것을 찾기
+        cur.execute(
+            "SELECT DISTINCT log_date FROM routine_logs "
+            "WHERE routine_id=? AND log_date < ? ORDER BY log_date",
+            (routine_id, today_str),
+        )
+        past_dates = [r["log_date"] for r in cur.fetchall()]
+        for d in past_dates:
+            cur.execute(
+                "SELECT COUNT(*) as cnt FROM routine_logs "
+                "WHERE routine_id=? AND log_date=?",
+                (routine_id, d),
+            )
+            if cur.fetchone()["cnt"] < daily_count:
+                return d
+
+        # 과제가 처음 시작되었거나 기록이 없는 경우: 오늘 이전 로그가 없으면 오늘
+        # 어제 날짜에 로그가 있었는지 확인 (로그가 한 번도 없었던 날은 건너뜀)
+        # → 단순히: 로그가 있는 과거 날짜 중 미완료가 없으면 오늘 반환
+        return today_str
     finally:
         conn.close()
 
@@ -759,6 +915,87 @@ def wol_boot_thread(mac, ip, pc_name, log_callback):
     log_callback(f"[WOL] {msg}")
     send_telegram(msg)
     return False
+
+
+# ═══════════════════════════════════════════════════════════
+#  과제 편집 다이얼로그
+# ═══════════════════════════════════════════════════════════
+class RoutineEditDialog(tk.Toplevel):
+    def __init__(self, parent, routine=None):
+        super().__init__(parent)
+        self.result = None
+        self.routine = routine
+        self.title("일정 편집" if routine else "일정 추가")
+        self.resizable(False, False)
+        self.grab_set()
+
+        frame = ttk.Frame(self, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text="내용:").grid(row=0, column=0, sticky=tk.W, pady=3)
+        self.ent_name = ttk.Entry(frame, width=25)
+        self.ent_name.grid(row=0, column=1, pady=3, padx=(5, 0))
+
+        ttk.Label(frame, text="하루 횟수:").grid(row=1, column=0, sticky=tk.W, pady=3)
+        self.cmb_count = ttk.Combobox(frame, values=["1", "2", "3", "4", "5"],
+                                       width=5, state="readonly")
+        self.cmb_count.grid(row=1, column=1, sticky=tk.W, pady=3, padx=(5, 0))
+        self.cmb_count.set("1")
+
+        ttk.Label(frame, text="반복:").grid(row=2, column=0, sticky=tk.W, pady=3)
+        self.cmb_repeat = ttk.Combobox(frame, values=["1회", "매일"],
+                                        width=8, state="readonly")
+        self.cmb_repeat.grid(row=2, column=1, sticky=tk.W, pady=3, padx=(5, 0))
+        self.cmb_repeat.set("1회")
+
+        ttk.Label(frame, text="시작일:").grid(row=3, column=0, sticky=tk.W, pady=3)
+        self.ent_start_date = ttk.Entry(frame, width=12)
+        self.ent_start_date.grid(row=3, column=1, sticky=tk.W, pady=3, padx=(5, 0))
+        self.ent_start_date.insert(0, date.today().strftime("%Y-%m-%d"))
+
+        self.var_enabled = tk.BooleanVar(value=True)
+        ttk.Checkbutton(frame, text="사용", variable=self.var_enabled).grid(
+            row=4, column=0, columnspan=2, sticky=tk.W, pady=3
+        )
+
+        if routine:
+            self.ent_name.insert(0, routine["name"])
+            self.cmb_count.set(str(routine["daily_count"]))
+            repeat_label = "1회" if routine.get("repeat_type", "once") == "once" else "매일"
+            self.cmb_repeat.set(repeat_label)
+            self.ent_start_date.delete(0, tk.END)
+            self.ent_start_date.insert(0, routine.get("start_date", ""))
+            self.var_enabled.set(bool(routine["enabled"]))
+
+        btn_frame = ttk.Frame(frame)
+        btn_frame.grid(row=5, column=0, columnspan=2, pady=(10, 0))
+        ttk.Button(btn_frame, text="확인", command=self._on_ok).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="취소", command=self.destroy).pack(side=tk.LEFT, padx=5)
+
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.transient(parent)
+        self.update_idletasks()
+        pw, ph = parent.winfo_width(), parent.winfo_height()
+        px, py = parent.winfo_x(), parent.winfo_y()
+        dw, dh = self.winfo_width(), self.winfo_height()
+        self.geometry(f"+{px + (pw - dw) // 2}+{py + (ph - dh) // 2}")
+        self.ent_name.focus_set()
+
+    def _on_ok(self):
+        name = self.ent_name.get().strip()
+        if not name:
+            messagebox.showwarning("입력 오류", "내용을 입력하세요.", parent=self)
+            return
+        repeat_type = "once" if self.cmb_repeat.get() == "1회" else "daily"
+        self.result = {
+            "id": self.routine["id"] if self.routine else None,
+            "name": name,
+            "daily_count": int(self.cmb_count.get()),
+            "repeat_type": repeat_type,
+            "start_date": self.ent_start_date.get().strip(),
+            "enabled": self.var_enabled.get(),
+        }
+        self.destroy()
 
 
 # ═══════════════════════════════════════════════════════════
@@ -2025,6 +2262,7 @@ class AutoExecApp:
         self._refresh_pc_list()
         self._refresh_task_list()
         self._refresh_profile_list()
+        self._refresh_routine_list()
         self._tick()
         # 트레이 아이콘은 mainloop 진입 후 생성 (윈도우 준비 완료 후)
         self.root.after(500, self._setup_tray)
@@ -2163,9 +2401,41 @@ class AutoExecApp:
         ttk.Button(pc_btn_frame, text="\u25b2", width=2, command=lambda: self._move_pc(-1)).pack(side=tk.LEFT, padx=(0, 1))
         ttk.Button(pc_btn_frame, text="\u25bc", width=2, command=lambda: self._move_pc(1)).pack(side=tk.LEFT)
 
-        # ── row 4: 로그 (전체 폭) ──
+        # ── row 4: 과제 (전체 폭) ──
+        lf_routine = ttk.LabelFrame(root, text="일정", padding=5)
+        lf_routine.grid(row=4, column=0, sticky=tk.NSEW, padx=8, pady=2)
+        lf_routine.columnconfigure(0, weight=1)
+        lf_routine.rowconfigure(0, weight=1)
+
+        routine_frame = ttk.Frame(lf_routine)
+        routine_frame.grid(row=0, column=0, sticky=tk.NSEW)
+        routine_frame.columnconfigure(0, weight=1)
+        routine_frame.rowconfigure(0, weight=1)
+
+        rt_cols = ("내용", "날짜", "진행")
+        self.routine_tree = ttk.Treeview(routine_frame, columns=rt_cols, show="headings", height=8)
+        self.routine_tree.heading("내용", text="내용")
+        self.routine_tree.heading("날짜", text="날짜")
+        self.routine_tree.heading("진행", text="진행")
+        self.routine_tree.column("내용", width=150)
+        self.routine_tree.column("날짜", width=100, anchor=tk.CENTER)
+        self.routine_tree.column("진행", width=80, anchor=tk.CENTER)
+        self.routine_tree.grid(row=0, column=0, sticky=tk.NSEW)
+        rt_scroll = ttk.Scrollbar(routine_frame, orient=tk.VERTICAL, command=self.routine_tree.yview)
+        rt_scroll.grid(row=0, column=1, sticky=tk.NS)
+        self.routine_tree.config(yscrollcommand=rt_scroll.set)
+        self.routine_tree.bind("<Double-1>", lambda e: self._complete_routine())
+        self.routine_tree.bind("<Button-3>", self._on_routine_right_click)
+
+        routine_btn_frame = ttk.Frame(lf_routine)
+        routine_btn_frame.grid(row=1, column=0, sticky=tk.W, pady=(3, 0))
+        ttk.Button(routine_btn_frame, text="추가", width=6, command=self._add_routine).pack(side=tk.LEFT, padx=(0, 3))
+        ttk.Button(routine_btn_frame, text="▲", width=3, command=lambda: self._move_routine(-1)).pack(side=tk.LEFT, padx=(0, 1))
+        ttk.Button(routine_btn_frame, text="▼", width=3, command=lambda: self._move_routine(1)).pack(side=tk.LEFT)
+
+        # ── row 5: 로그 (전체 폭) ──
         lf_log = ttk.LabelFrame(root, text="로그", padding=5)
-        lf_log.grid(row=4, column=0, sticky=tk.NSEW, padx=8, pady=(2, 8))
+        lf_log.grid(row=5, column=0, sticky=tk.NSEW, padx=8, pady=(2, 8))
         lf_log.columnconfigure(0, weight=1)
         lf_log.rowconfigure(0, weight=1)
 
@@ -2179,12 +2449,13 @@ class AutoExecApp:
         log_btn_frame.grid(row=1, column=0, sticky=tk.W, pady=(3, 0))
         ttk.Button(log_btn_frame, text="로그 삭제", command=self._clear_log).pack(side=tk.LEFT)
 
-        # 행 가중치: row 0,1(체크박스,Git) 고정, row 2(자동실행) 고정, row 3(이동대상+PC) 고정, row 4(로그) 확장
+        # 행 가중치: row 0,1 고정, row 2(자동실행) 고정, row 3(이동대상+PC) 고정, row 4(일정) 고정, row 5(로그) 확장
         root.rowconfigure(0, weight=0)
         root.rowconfigure(1, weight=0)
         root.rowconfigure(2, weight=0)
         root.rowconfigure(3, weight=0)
-        root.rowconfigure(4, weight=1)
+        root.rowconfigure(4, weight=0)
+        root.rowconfigure(5, weight=1)
 
     # ─── 윈도우 좌표 ─────────────────────────────────────
     def _restore_window(self):
@@ -2294,6 +2565,144 @@ class AutoExecApp:
             self.log_text.config(state=tk.DISABLED)
 
         self.root.after(0, _append)
+
+    # ─── 과제 (루틴) ──────────────────────────────────────
+    def _refresh_routine_list(self):
+        """과제 Treeview 갱신"""
+        self.routine_data = db_fetch_routines()
+        self.routine_tree.delete(*self.routine_tree.get_children())
+        today_str = date.today().strftime("%Y-%m-%d")
+        for rt in self.routine_data:
+            if not rt["enabled"]:
+                continue
+            # 시작일 필터링
+            start = rt.get("start_date", "")
+            repeat_type = rt.get("repeat_type", "once")
+            if start and start > today_str:
+                continue
+            # 1회: 시작일 당일에만 표시 (시작일이 없으면 항상 표시)
+            if repeat_type == "once" and start and start != today_str:
+                continue
+            active_date = db_get_routine_active_date(rt["id"], rt["daily_count"])
+            logs = db_fetch_routine_logs(rt["id"], active_date)
+            done = len(logs)
+            total = rt["daily_count"]
+            progress = f"{done}/{total}"
+            if done >= total:
+                progress = f"{done}/{total} ✓"
+            self.routine_tree.insert("", tk.END, iid=str(rt["id"]),
+                                     values=(rt["name"], active_date, progress))
+
+    def _get_selected_routine(self):
+        sel = self.routine_tree.selection()
+        if not sel:
+            messagebox.showinfo("알림", "일정을 선택하세요.", parent=self.root)
+            return None
+        rt_id = int(sel[0])
+        for rt in self.routine_data:
+            if rt["id"] == rt_id:
+                return rt
+        return None
+
+    def _on_routine_right_click(self, event):
+        """우클릭: 과제 컨텍스트 메뉴"""
+        item = self.routine_tree.identify_row(event.y)
+        if not item:
+            return
+        self.routine_tree.selection_set(item)
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="확인", command=self._complete_routine)
+        menu.add_command(label="취소", command=self._undo_routine)
+        menu.add_separator()
+        menu.add_command(label="편집", command=self._edit_routine)
+        menu.add_command(label="삭제", command=self._delete_routine)
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _add_routine(self):
+        dlg = RoutineEditDialog(self.root)
+        self.root.wait_window(dlg)
+        if dlg.result:
+            r = dlg.result
+            db_upsert_routine(None, r["name"], r["daily_count"], r["enabled"], r["start_date"], r["repeat_type"])
+            self._refresh_routine_list()
+            self.log(f"일정 추가: {r['name']}")
+
+    def _edit_routine(self):
+        rt = self._get_selected_routine()
+        if not rt:
+            return
+        dlg = RoutineEditDialog(self.root, routine=rt)
+        self.root.wait_window(dlg)
+        if dlg.result:
+            r = dlg.result
+            db_upsert_routine(r["id"], r["name"], r["daily_count"], r["enabled"], r["start_date"], r["repeat_type"])
+            self._refresh_routine_list()
+            self.log(f"일정 수정: {r['name']}")
+
+    def _delete_routine(self):
+        rt = self._get_selected_routine()
+        if not rt:
+            return
+        if not messagebox.askyesno("확인", f"'{rt['name']}' 일정을 삭제하시겠습니까?", parent=self.root):
+            return
+        db_delete_routine(rt["id"])
+        self._refresh_routine_list()
+        self.log(f"일정 삭제: {rt['name']}")
+
+    def _complete_routine(self):
+        """선택한 과제의 활성 날짜에 완료 1회 추가"""
+        rt = self._get_selected_routine()
+        if not rt:
+            return
+        active_date = db_get_routine_active_date(rt["id"], rt["daily_count"])
+        logs = db_fetch_routine_logs(rt["id"], active_date)
+        done = len(logs)
+        if done >= rt["daily_count"]:
+            messagebox.showinfo("알림", f"'{rt['name']}' 은(는) {active_date} 이미 완료되었습니다.",
+                                parent=self.root)
+            return
+        next_seq = done + 1
+        db_add_routine_log(rt["id"], active_date, next_seq)
+        if next_seq >= rt["daily_count"]:
+            self.log(f"일정 완료: {rt['name']} ({active_date} {next_seq}/{rt['daily_count']})")
+            # 1회 일정은 완료 시 비활성화
+            if rt.get("repeat_type", "once") == "once":
+                db_upsert_routine(rt["id"], rt["name"], rt["daily_count"], 0,
+                                  rt.get("start_date", ""), "once")
+                self.log(f"1회 일정 완료 → 비활성화: {rt['name']}")
+        else:
+            self.log(f"일정 진행: {rt['name']} ({active_date} {next_seq}/{rt['daily_count']})")
+        self._refresh_routine_list()
+
+    def _undo_routine(self):
+        """잘못 누른 확인을 되돌리기 (마지막 1회 취소)"""
+        rt = self._get_selected_routine()
+        if not rt:
+            return
+        active_date = db_get_routine_active_date(rt["id"], rt["daily_count"])
+        logs = db_fetch_routine_logs(rt["id"], active_date)
+        if not logs:
+            messagebox.showinfo("알림", f"'{rt['name']}' 되돌릴 기록이 없습니다.",
+                                parent=self.root)
+            return
+        db_remove_last_routine_log(rt["id"], active_date)
+        done = len(logs) - 1
+        self._refresh_routine_list()
+        self.log(f"일정 확인 취소: {rt['name']} ({active_date} {done}/{rt['daily_count']})")
+
+    def _move_routine(self, direction):
+        """과제 순서 이동"""
+        rt = self._get_selected_routine()
+        if not rt:
+            return
+        enabled_data = [r for r in self.routine_data if r["enabled"]]
+        idx = next((i for i, r in enumerate(enabled_data) if r["id"] == rt["id"]), -1)
+        target = idx + direction
+        if target < 0 or target >= len(enabled_data):
+            return
+        db_swap_sort_order("routines", rt["id"], enabled_data[target]["id"])
+        self._refresh_routine_list()
+        self.routine_tree.selection_set(str(rt["id"]))
 
     # ─── PC 리스트 ───────────────────────────────────────
     def _refresh_pc_list(self):
@@ -3069,6 +3478,7 @@ class AutoExecApp:
             # DB에서 최신 데이터 리로드
             self._refresh_pc_list()
             self._refresh_task_list()
+            self._refresh_routine_list()
 
         is_closed = self._is_closed_day(now)
 
