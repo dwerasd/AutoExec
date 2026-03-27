@@ -373,33 +373,55 @@ def db_remove_last_routine_log(routine_id, log_date):
         conn.close()
 
 
-def db_get_routine_active_date(routine_id, daily_count):
-    """과제의 활성 날짜를 반환. 전날 미완료 시 전날 날짜, 완료 시 오늘 날짜."""
+def db_get_routine_display_dates(routine_id, daily_count, start_date, repeat_type):
+    """일정의 표시할 날짜 목록 반환. [(date_str, done_count, is_past), ...]
+    매일 반복: start_date~오늘 중 미완료 날짜(최대 7일) + 오늘.
+    1회: 해당 날짜만."""
     conn = get_db_connection()
     try:
         cur = conn.cursor()
-        # 어제 이전 미완료 날짜가 있는지 확인 (가장 오래된 미완료 날짜)
-        today_str = date.today().strftime("%Y-%m-%d")
-        # 오늘 이전의 모든 기록된 날짜 중 미완료인 것을 찾기
-        cur.execute(
-            "SELECT DISTINCT log_date FROM routine_logs "
-            "WHERE routine_id=? AND log_date < ? ORDER BY log_date",
-            (routine_id, today_str),
-        )
-        past_dates = [r["log_date"] for r in cur.fetchall()]
-        for d in past_dates:
-            cur.execute(
-                "SELECT COUNT(*) as cnt FROM routine_logs "
-                "WHERE routine_id=? AND log_date=?",
-                (routine_id, d),
-            )
-            if cur.fetchone()["cnt"] < daily_count:
-                return d
+        today = date.today()
+        today_str = today.strftime("%Y-%m-%d")
 
-        # 과제가 처음 시작되었거나 기록이 없는 경우: 오늘 이전 로그가 없으면 오늘
-        # 어제 날짜에 로그가 있었는지 확인 (로그가 한 번도 없었던 날은 건너뜀)
-        # → 단순히: 로그가 있는 과거 날짜 중 미완료가 없으면 오늘 반환
-        return today_str
+        if repeat_type == "once":
+            target = start_date if start_date else today_str
+            cur.execute(
+                "SELECT COUNT(*) as cnt FROM routine_logs WHERE routine_id=? AND log_date=?",
+                (routine_id, target),
+            )
+            return [(target, cur.fetchone()["cnt"], target < today_str)]
+
+        # 매일 반복 — 시작일 결정
+        if start_date:
+            start = datetime.strptime(start_date, "%Y-%m-%d").date()
+        else:
+            cur.execute(
+                "SELECT MIN(log_date) as first_date FROM routine_logs WHERE routine_id=?",
+                (routine_id,),
+            )
+            row = cur.fetchone()
+            start = datetime.strptime(row["first_date"], "%Y-%m-%d").date() if row["first_date"] else today
+
+        # 최대 7일 전까지만
+        week_ago = today - timedelta(days=7)
+        start = max(start, week_ago)
+
+        results = []
+        current = start
+        while current <= today:
+            d_str = current.strftime("%Y-%m-%d")
+            cur.execute(
+                "SELECT COUNT(*) as cnt FROM routine_logs WHERE routine_id=? AND log_date=?",
+                (routine_id, d_str),
+            )
+            done = cur.fetchone()["cnt"]
+            is_past = current < today
+            # 과거 미완료 또는 오늘이면 표시
+            if done < daily_count or current == today:
+                results.append((d_str, done, is_past))
+            current += timedelta(days=1)
+
+        return results
     finally:
         conn.close()
 
@@ -2411,16 +2433,17 @@ class AutoExecApp:
         routine_frame.columnconfigure(0, weight=1)
         routine_frame.rowconfigure(0, weight=1)
 
-        rt_cols = ("내용", "날짜", "진행", "완료시간")
+        rt_cols = ("날짜", "내용", "진행", "완료시간")
         self.routine_tree = ttk.Treeview(routine_frame, columns=rt_cols, show="headings", height=8)
-        self.routine_tree.heading("내용", text="내용")
         self.routine_tree.heading("날짜", text="날짜")
+        self.routine_tree.heading("내용", text="내용")
         self.routine_tree.heading("진행", text="진행")
         self.routine_tree.heading("완료시간", text="완료시간")
-        self.routine_tree.column("내용", width=150)
         self.routine_tree.column("날짜", width=100, anchor=tk.CENTER)
+        self.routine_tree.column("내용", width=150)
         self.routine_tree.column("진행", width=80, anchor=tk.CENTER)
         self.routine_tree.column("완료시간", width=80, anchor=tk.CENTER)
+        self.routine_tree.tag_configure("missed", foreground="gray")
         self.routine_tree.grid(row=0, column=0, sticky=tk.NSEW)
         rt_scroll = ttk.Scrollbar(routine_frame, orient=tk.VERTICAL, command=self.routine_tree.yview)
         rt_scroll.grid(row=0, column=1, sticky=tk.NS)
@@ -2569,7 +2592,7 @@ class AutoExecApp:
 
     # ─── 과제 (루틴) ──────────────────────────────────────
     def _refresh_routine_list(self):
-        """과제 Treeview 갱신"""
+        """과제 Treeview 갱신 — 매일 반복 일정은 과거 미완료 날짜도 회색으로 표시"""
         self.routine_data = db_fetch_routines()
         self.routine_tree.delete(*self.routine_tree.get_children())
         today_str = date.today().strftime("%Y-%m-%d")
@@ -2584,27 +2607,39 @@ class AutoExecApp:
             # 1회: 시작일 당일에만 표시 (시작일이 없으면 항상 표시)
             if repeat_type == "once" and start and start != today_str:
                 continue
-            active_date = db_get_routine_active_date(rt["id"], rt["daily_count"])
-            logs = db_fetch_routine_logs(rt["id"], active_date)
-            done = len(logs)
-            total = rt["daily_count"]
-            progress = f"{done}/{total}"
-            if done >= total:
-                progress = f"{done}/{total} ✓"
-            last_time = logs[-1]["done_time"] if logs else ""
-            self.routine_tree.insert("", tk.END, iid=str(rt["id"]),
-                                     values=(rt["name"], active_date, progress, last_time))
+            display_dates = db_get_routine_display_dates(
+                rt["id"], rt["daily_count"], start, repeat_type)
+            for date_str, done, is_past in display_dates:
+                total = rt["daily_count"]
+                progress = f"{done}/{total}"
+                if done >= total:
+                    progress = f"{done}/{total} ✓"
+                logs = db_fetch_routine_logs(rt["id"], date_str)
+                last_time = logs[-1]["done_time"] if logs else ""
+                iid = f"{rt['id']}:{date_str}"
+                tag = ("missed",) if is_past else ()
+                self.routine_tree.insert("", tk.END, iid=iid,
+                                         values=(date_str, rt["name"], progress, last_time),
+                                         tags=tag)
 
     def _get_selected_routine(self):
         sel = self.routine_tree.selection()
         if not sel:
             messagebox.showinfo("알림", "일정을 선택하세요.", parent=self.root)
             return None
-        rt_id = int(sel[0])
+        rt_id = int(sel[0].split(":")[0])
         for rt in self.routine_data:
             if rt["id"] == rt_id:
                 return rt
         return None
+
+    def _get_selected_routine_date(self):
+        """선택된 행의 날짜 반환"""
+        sel = self.routine_tree.selection()
+        if not sel:
+            return None
+        parts = sel[0].split(":")
+        return parts[1] if len(parts) > 1 else None
 
     def _on_routine_right_click(self, event):
         """우클릭: 과제 컨텍스트 메뉴"""
@@ -2652,11 +2687,13 @@ class AutoExecApp:
         self.log(f"일정 삭제: {rt['name']}")
 
     def _complete_routine(self):
-        """선택한 과제의 활성 날짜에 완료 1회 추가"""
+        """선택한 과제의 해당 날짜에 완료 1회 추가"""
         rt = self._get_selected_routine()
         if not rt:
             return
-        active_date = db_get_routine_active_date(rt["id"], rt["daily_count"])
+        active_date = self._get_selected_routine_date()
+        if not active_date:
+            return
         logs = db_fetch_routine_logs(rt["id"], active_date)
         done = len(logs)
         if done >= rt["daily_count"]:
@@ -2681,7 +2718,9 @@ class AutoExecApp:
         rt = self._get_selected_routine()
         if not rt:
             return
-        active_date = db_get_routine_active_date(rt["id"], rt["daily_count"])
+        active_date = self._get_selected_routine_date()
+        if not active_date:
+            return
         logs = db_fetch_routine_logs(rt["id"], active_date)
         if not logs:
             messagebox.showinfo("알림", f"'{rt['name']}' 되돌릴 기록이 없습니다.",
@@ -2704,7 +2743,10 @@ class AutoExecApp:
             return
         db_swap_sort_order("routines", rt["id"], enabled_data[target]["id"])
         self._refresh_routine_list()
-        self.routine_tree.selection_set(str(rt["id"]))
+        # 이동 후 오늘 날짜 행 선택
+        today_iid = f"{rt['id']}:{date.today().strftime('%Y-%m-%d')}"
+        if self.routine_tree.exists(today_iid):
+            self.routine_tree.selection_set(today_iid)
 
     # ─── PC 리스트 ───────────────────────────────────────
     def _refresh_pc_list(self):
