@@ -419,6 +419,7 @@ def db_get_routine_display_dates(routine_id, daily_count, start_date, repeat_typ
         start = max(start, week_ago)
 
         results = []
+        now = datetime.now()
         current = start
         while current <= today:
             d_str = current.strftime("%Y-%m-%d")
@@ -428,9 +429,27 @@ def db_get_routine_display_dates(routine_id, daily_count, start_date, repeat_typ
             )
             done = cur.fetchone()["cnt"]
             is_past = current < today
-            # 과거 미완료 또는 오늘이면 표시
-            if done < daily_count or current == today:
-                results.append((d_str, done, is_past))
+            if current == today:
+                # 오늘은 항상 표시
+                results.append((d_str, done, False))
+            elif done < daily_count:
+                # 과거 미완료 → 표시
+                results.append((d_str, done, True))
+            else:
+                # 과거 완료 → 마지막 완료 시각이 24시간 이내면 표시
+                cur.execute(
+                    "SELECT done_time FROM routine_logs "
+                    "WHERE routine_id=? AND log_date=? ORDER BY seq DESC LIMIT 1",
+                    (routine_id, d_str),
+                )
+                row = cur.fetchone()
+                if row and row["done_time"]:
+                    try:
+                        done_dt = datetime.strptime(f"{d_str} {row['done_time']}", "%Y-%m-%d %H:%M:%S")
+                        if (now - done_dt).total_seconds() < 86400:
+                            results.append((d_str, done, True))
+                    except ValueError:
+                        pass
             current += timedelta(days=1)
 
         return results
@@ -2647,15 +2666,15 @@ class AutoExecApp:
         self.routine_data = db_fetch_routines()
         self.routine_tree.delete(*self.routine_tree.get_children())
         today_str = date.today().strftime("%Y-%m-%d")
+        # 모든 행을 수집 후 날짜 → 정렬순으로 정렬하여 삽입
+        rows = []
         for rt in self.routine_data:
             if not rt["enabled"]:
                 continue
-            # 시작일 필터링
             start = rt.get("start_date", "")
             repeat_type = rt.get("repeat_type", "once")
             if start and start > today_str:
                 continue
-            # 1회: 시작일 당일에만 표시 (시작일이 없으면 항상 표시)
             if repeat_type == "once" and start and start != today_str:
                 continue
             display_dates = db_get_routine_display_dates(
@@ -2669,9 +2688,11 @@ class AutoExecApp:
                 last_time = logs[-1]["done_time"] if logs else ""
                 iid = f"{rt['id']}:{date_str}"
                 tag = ("missed",) if is_past else ()
-                self.routine_tree.insert("", tk.END, iid=iid,
-                                         values=(date_str, rt["name"], progress, last_time),
-                                         tags=tag)
+                rows.append((date_str, rt.get("sort_order", 0), iid,
+                             (date_str, rt["name"], progress, last_time), tag))
+        rows.sort(key=lambda r: (r[0], r[1]))
+        for _, _, iid, values, tag in rows:
+            self.routine_tree.insert("", tk.END, iid=iid, values=values, tags=tag)
 
     def _get_selected_routine(self):
         sel = self.routine_tree.selection()
