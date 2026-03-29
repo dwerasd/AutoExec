@@ -2511,6 +2511,7 @@ class AutoExecApp:
         self.routine_tree.column("완료시간", width=80, anchor=tk.CENTER)
         self.routine_tree.column("경과", width=80, anchor=tk.CENTER)
         self.routine_tree.tag_configure("missed", foreground="gray")
+        self.routine_tree.tag_configure("done", foreground="gray")
         self.routine_tree.grid(row=0, column=0, sticky=tk.NSEW)
         rt_scroll = ttk.Scrollbar(routine_frame, orient=tk.VERTICAL, command=self.routine_tree.yview)
         rt_scroll.grid(row=0, column=1, sticky=tk.NS)
@@ -2736,12 +2737,34 @@ class AutoExecApp:
                     if prev_dt:
                         elapsed = format_elapsed((now - prev_dt).total_seconds())
                 iid = f"{rt['id']}:{date_str}"
-                tag = ("missed",) if is_past else ()
+                tag = ("done",) if done >= total else ("missed",) if is_past else ()
                 rows.append((date_str, rt.get("sort_order", 0), iid,
                              (date_str, rt["name"], progress, last_time, elapsed), tag))
         rows.sort(key=lambda r: (r[0], r[1]))
         for _, _, iid, values, tag in rows:
             self.routine_tree.insert("", tk.END, iid=iid, values=values, tags=tag)
+
+    def _refresh_routine_elapsed(self):
+        """일정 경과시간 컬럼만 갱신 (전체 리프레시 없이)"""
+        now = datetime.now()
+        for iid in self.routine_tree.get_children():
+            parts = iid.split(":")
+            rt_id = int(parts[0])
+            date_str = parts[1]
+            vals = self.routine_tree.item(iid, "values")
+            last_time = vals[3] if len(vals) > 3 else ""
+            elapsed = ""
+            if last_time:
+                try:
+                    done_dt = datetime.strptime(f"{date_str} {last_time}", "%Y-%m-%d %H:%M:%S")
+                    elapsed = format_elapsed((now - done_dt).total_seconds())
+                except ValueError:
+                    pass
+            elif vals[2].startswith("0/"):
+                prev_dt = db_get_prev_routine_done_time(rt_id, date_str)
+                if prev_dt:
+                    elapsed = format_elapsed((now - prev_dt).total_seconds())
+            self.routine_tree.set(iid, "경과", elapsed)
 
     def _get_selected_routine(self):
         sel = self.routine_tree.selection()
@@ -3726,6 +3749,10 @@ class AutoExecApp:
 
         # 프로세스 감지 (3초마다)
         self._check_process_profiles()
+
+        # 일정 경과시간 갱신 (1분마다)
+        if now.second == 0:
+            self._refresh_routine_elapsed()
 
         self.root.after(1000, self._tick)
 
