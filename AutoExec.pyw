@@ -279,6 +279,41 @@ def db_swap_sort_order(table, id_a, id_b):
         conn.close()
 
 
+def db_get_prev_routine_done_time(routine_id, before_date):
+    """해당 날짜 이전의 가장 최근 완료 시각 반환 (datetime 또는 None)"""
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT log_date, done_time FROM routine_logs "
+            "WHERE routine_id=? AND log_date<? ORDER BY log_date DESC, seq DESC LIMIT 1",
+            (routine_id, before_date),
+        )
+        row = cur.fetchone()
+        if row and row["done_time"]:
+            try:
+                return datetime.strptime(f"{row['log_date']} {row['done_time']}", "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                return None
+        return None
+    finally:
+        conn.close()
+
+
+def format_elapsed(seconds):
+    """초 단위를 사람이 읽기 좋은 경과 문자열로 변환"""
+    if seconds < 0:
+        return ""
+    minutes = int(seconds // 60)
+    hours = minutes // 60
+    days = hours // 24
+    if days > 0:
+        return f"{days}일 {hours % 24}시간"
+    if hours > 0:
+        return f"{hours}시간 {minutes % 60}분"
+    return f"{minutes}분"
+
+
 def db_update_name(table, record_id, new_name):
     """테이블의 name 컬럼만 업데이트"""
     if table not in ("tasks", "window_profiles", "routines"):
@@ -428,7 +463,6 @@ def db_get_routine_display_dates(routine_id, daily_count, start_date, repeat_typ
                 (routine_id, d_str),
             )
             done = cur.fetchone()["cnt"]
-            is_past = current < today
             if current == today:
                 # 오늘은 항상 표시
                 results.append((d_str, done, False))
@@ -2464,16 +2498,18 @@ class AutoExecApp:
         routine_frame.columnconfigure(0, weight=1)
         routine_frame.rowconfigure(0, weight=1)
 
-        rt_cols = ("날짜", "내용", "진행", "완료시간")
+        rt_cols = ("날짜", "내용", "진행", "완료시간", "경과")
         self.routine_tree = ttk.Treeview(routine_frame, columns=rt_cols, show="headings", height=8)
         self.routine_tree.heading("날짜", text="날짜")
         self.routine_tree.heading("내용", text="내용")
         self.routine_tree.heading("진행", text="진행")
         self.routine_tree.heading("완료시간", text="완료시간")
+        self.routine_tree.heading("경과", text="경과")
         self.routine_tree.column("날짜", width=100, anchor=tk.CENTER)
         self.routine_tree.column("내용", width=150)
         self.routine_tree.column("진행", width=80, anchor=tk.CENTER)
         self.routine_tree.column("완료시간", width=80, anchor=tk.CENTER)
+        self.routine_tree.column("경과", width=80, anchor=tk.CENTER)
         self.routine_tree.tag_configure("missed", foreground="gray")
         self.routine_tree.grid(row=0, column=0, sticky=tk.NSEW)
         rt_scroll = ttk.Scrollbar(routine_frame, orient=tk.VERTICAL, command=self.routine_tree.yview)
@@ -2686,10 +2722,23 @@ class AutoExecApp:
                     progress = f"{done}/{total} ✓"
                 logs = db_fetch_routine_logs(rt["id"], date_str)
                 last_time = logs[-1]["done_time"] if logs else ""
+                # 경과시간: 완료 후 현재까지, 미완료 시 이전 완료로부터 현재까지
+                elapsed = ""
+                now = datetime.now()
+                if last_time:
+                    try:
+                        done_dt = datetime.strptime(f"{date_str} {last_time}", "%Y-%m-%d %H:%M:%S")
+                        elapsed = format_elapsed((now - done_dt).total_seconds())
+                    except ValueError:
+                        pass
+                elif done == 0:
+                    prev_dt = db_get_prev_routine_done_time(rt["id"], date_str)
+                    if prev_dt:
+                        elapsed = format_elapsed((now - prev_dt).total_seconds())
                 iid = f"{rt['id']}:{date_str}"
                 tag = ("missed",) if is_past else ()
                 rows.append((date_str, rt.get("sort_order", 0), iid,
-                             (date_str, rt["name"], progress, last_time), tag))
+                             (date_str, rt["name"], progress, last_time, elapsed), tag))
         rows.sort(key=lambda r: (r[0], r[1]))
         for _, _, iid, values, tag in rows:
             self.routine_tree.insert("", tk.END, iid=iid, values=values, tags=tag)
