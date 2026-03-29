@@ -216,6 +216,15 @@ def db_init():
                 )
     except Exception:
         pass
+    # routine_logs의 구형 done_time(HH:MM:SS) → 풀 datetime(YYYY-MM-DD HH:MM:SS) 마이그레이션
+    try:
+        cur.execute("SELECT id, log_date, done_time FROM routine_logs WHERE LENGTH(done_time) <= 8 AND done_time != ''")
+        old_rows = cur.fetchall()
+        for r in old_rows:
+            new_time = f"{r['log_date']} {r['done_time']}"
+            cur.execute("UPDATE routine_logs SET done_time=? WHERE id=?", (new_time, r["id"]))
+    except Exception:
+        pass
     conn.commit()
     conn.close()
 
@@ -279,6 +288,27 @@ def db_swap_sort_order(table, id_a, id_b):
         conn.close()
 
 
+def parse_done_datetime(log_date, done_time):
+    """done_time을 datetime으로 변환. 풀 datetime 또는 시간만 있는 구형 포맷 모두 지원."""
+    if not done_time:
+        return None
+    try:
+        if len(done_time) > 8:
+            # 풀 datetime: "YYYY-MM-DD HH:MM:SS"
+            return datetime.strptime(done_time, "%Y-%m-%d %H:%M:%S")
+        # 구형: 시간만 "HH:MM:SS" → log_date와 조합
+        return datetime.strptime(f"{log_date} {done_time}", "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
+def format_done_time_display(done_time):
+    """done_time을 표시용 문자열로 변환 (풀 datetime 그대로 표시)"""
+    if not done_time:
+        return ""
+    return done_time
+
+
 def db_get_prev_routine_done_time(routine_id, before_date):
     """해당 날짜 이전의 가장 최근 완료 시각 반환 (datetime 또는 None)"""
     conn = get_db_connection()
@@ -291,10 +321,7 @@ def db_get_prev_routine_done_time(routine_id, before_date):
         )
         row = cur.fetchone()
         if row and row["done_time"]:
-            try:
-                return datetime.strptime(f"{row['log_date']} {row['done_time']}", "%Y-%m-%d %H:%M:%S")
-            except ValueError:
-                return None
+            return parse_done_datetime(row["log_date"], row["done_time"])
         return None
     finally:
         conn.close()
@@ -390,7 +417,7 @@ def db_add_routine_log(routine_id, log_date, seq):
     """과제 완료 기록 추가"""
     conn = get_db_connection()
     try:
-        now_str = datetime.now().strftime("%H:%M:%S")
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         conn.execute(
             "INSERT OR IGNORE INTO routine_logs (routine_id, log_date, seq, done_time) "
             "VALUES (?, ?, ?, ?)",
@@ -478,12 +505,9 @@ def db_get_routine_display_dates(routine_id, daily_count, start_date, repeat_typ
                 )
                 row = cur.fetchone()
                 if row and row["done_time"]:
-                    try:
-                        done_dt = datetime.strptime(f"{d_str} {row['done_time']}", "%Y-%m-%d %H:%M:%S")
-                        if (now - done_dt).total_seconds() < 86400:
-                            results.append((d_str, done, True))
-                    except ValueError:
-                        pass
+                    done_dt = parse_done_datetime(d_str, row["done_time"])
+                    if done_dt and (now - done_dt).total_seconds() < 86400:
+                        results.append((d_str, done, True))
             current += timedelta(days=1)
 
         return results
@@ -1023,31 +1047,24 @@ class RoutineEditDialog(tk.Toplevel):
         self.ent_name = ttk.Entry(frame, width=25)
         self.ent_name.grid(row=0, column=1, pady=3, padx=(5, 0))
 
-        ttk.Label(frame, text="하루 횟수:").grid(row=1, column=0, sticky=tk.W, pady=3)
-        self.cmb_count = ttk.Combobox(frame, values=["1", "2", "3", "4", "5"],
-                                       width=5, state="readonly")
-        self.cmb_count.grid(row=1, column=1, sticky=tk.W, pady=3, padx=(5, 0))
-        self.cmb_count.set("1")
-
-        ttk.Label(frame, text="반복:").grid(row=2, column=0, sticky=tk.W, pady=3)
+        ttk.Label(frame, text="반복:").grid(row=1, column=0, sticky=tk.W, pady=3)
         self.cmb_repeat = ttk.Combobox(frame, values=["1회", "매일"],
                                         width=8, state="readonly")
-        self.cmb_repeat.grid(row=2, column=1, sticky=tk.W, pady=3, padx=(5, 0))
+        self.cmb_repeat.grid(row=1, column=1, sticky=tk.W, pady=3, padx=(5, 0))
         self.cmb_repeat.set("1회")
 
-        ttk.Label(frame, text="시작일:").grid(row=3, column=0, sticky=tk.W, pady=3)
+        ttk.Label(frame, text="시작일:").grid(row=2, column=0, sticky=tk.W, pady=3)
         self.ent_start_date = ttk.Entry(frame, width=12)
-        self.ent_start_date.grid(row=3, column=1, sticky=tk.W, pady=3, padx=(5, 0))
+        self.ent_start_date.grid(row=2, column=1, sticky=tk.W, pady=3, padx=(5, 0))
         self.ent_start_date.insert(0, date.today().strftime("%Y-%m-%d"))
 
         self.var_enabled = tk.BooleanVar(value=True)
         ttk.Checkbutton(frame, text="사용", variable=self.var_enabled).grid(
-            row=4, column=0, columnspan=2, sticky=tk.W, pady=3
+            row=3, column=0, columnspan=2, sticky=tk.W, pady=3
         )
 
         if routine:
             self.ent_name.insert(0, routine["name"])
-            self.cmb_count.set(str(routine["daily_count"]))
             repeat_label = "1회" if routine.get("repeat_type", "once") == "once" else "매일"
             self.cmb_repeat.set(repeat_label)
             self.ent_start_date.delete(0, tk.END)
@@ -1055,7 +1072,7 @@ class RoutineEditDialog(tk.Toplevel):
             self.var_enabled.set(bool(routine["enabled"]))
 
         btn_frame = ttk.Frame(frame)
-        btn_frame.grid(row=5, column=0, columnspan=2, pady=(10, 0))
+        btn_frame.grid(row=4, column=0, columnspan=2, pady=(10, 0))
         ttk.Button(btn_frame, text="확인", command=self._on_ok).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="취소", command=self.destroy).pack(side=tk.LEFT, padx=5)
 
@@ -1077,7 +1094,7 @@ class RoutineEditDialog(tk.Toplevel):
         self.result = {
             "id": self.routine["id"] if self.routine else None,
             "name": name,
-            "daily_count": int(self.cmb_count.get()),
+            "daily_count": 1,
             "repeat_type": repeat_type,
             "start_date": self.ent_start_date.get().strip(),
             "enabled": self.var_enabled.get(),
@@ -2498,18 +2515,16 @@ class AutoExecApp:
         routine_frame.columnconfigure(0, weight=1)
         routine_frame.rowconfigure(0, weight=1)
 
-        rt_cols = ("날짜", "내용", "진행", "완료시간", "경과")
+        rt_cols = ("날짜", "내용", "완료시간", "경과")
         self.routine_tree = ttk.Treeview(routine_frame, columns=rt_cols, show="headings", height=8)
         self.routine_tree.heading("날짜", text="날짜")
         self.routine_tree.heading("내용", text="내용")
-        self.routine_tree.heading("진행", text="진행")
         self.routine_tree.heading("완료시간", text="완료시간")
         self.routine_tree.heading("경과", text="경과")
-        self.routine_tree.column("날짜", width=100, anchor=tk.CENTER)
-        self.routine_tree.column("내용", width=150)
-        self.routine_tree.column("진행", width=80, anchor=tk.CENTER)
-        self.routine_tree.column("완료시간", width=80, anchor=tk.CENTER)
-        self.routine_tree.column("경과", width=80, anchor=tk.CENTER)
+        self.routine_tree.column("날짜", width=80, anchor=tk.CENTER)
+        self.routine_tree.column("내용", width=110)
+        self.routine_tree.column("완료시간", width=130, anchor=tk.CENTER)
+        self.routine_tree.column("경과", width=70, anchor=tk.CENTER)
         self.routine_tree.tag_configure("missed", foreground="gray")
         self.routine_tree.tag_configure("done", foreground="gray")
         self.routine_tree.grid(row=0, column=0, sticky=tk.NSEW)
@@ -2715,31 +2730,26 @@ class AutoExecApp:
             if repeat_type == "once" and start and start != today_str:
                 continue
             display_dates = db_get_routine_display_dates(
-                rt["id"], rt["daily_count"], start, repeat_type)
+                rt["id"], 1, start, repeat_type)
             for date_str, done, is_past in display_dates:
-                total = rt["daily_count"]
-                progress = f"{done}/{total}"
-                if done >= total:
-                    progress = f"{done}/{total} ✓"
                 logs = db_fetch_routine_logs(rt["id"], date_str)
-                last_time = logs[-1]["done_time"] if logs else ""
+                raw_time = logs[-1]["done_time"] if logs else ""
+                display_time = format_done_time_display(raw_time)
                 # 경과시간: 완료 후 현재까지, 미완료 시 이전 완료로부터 현재까지
                 elapsed = ""
                 now = datetime.now()
-                if last_time:
-                    try:
-                        done_dt = datetime.strptime(f"{date_str} {last_time}", "%Y-%m-%d %H:%M:%S")
+                if raw_time:
+                    done_dt = parse_done_datetime(date_str, raw_time)
+                    if done_dt:
                         elapsed = format_elapsed((now - done_dt).total_seconds())
-                    except ValueError:
-                        pass
                 elif done == 0:
                     prev_dt = db_get_prev_routine_done_time(rt["id"], date_str)
                     if prev_dt:
                         elapsed = format_elapsed((now - prev_dt).total_seconds())
                 iid = f"{rt['id']}:{date_str}"
-                tag = ("done",) if done >= total else ("missed",) if is_past else ()
+                tag = ("done",) if done >= 1 else ("missed",) if is_past else ()
                 rows.append((date_str, rt.get("sort_order", 0), iid,
-                             (date_str, rt["name"], progress, last_time, elapsed), tag))
+                             (date_str, rt["name"], display_time, elapsed), tag))
         rows.sort(key=lambda r: (r[0], r[1]))
         for _, _, iid, values, tag in rows:
             self.routine_tree.insert("", tk.END, iid=iid, values=values, tags=tag)
@@ -2751,16 +2761,16 @@ class AutoExecApp:
             parts = iid.split(":")
             rt_id = int(parts[0])
             date_str = parts[1]
-            vals = self.routine_tree.item(iid, "values")
-            last_time = vals[3] if len(vals) > 3 else ""
+            vals = list(self.routine_tree.item(iid, "values"))
+            display_time = vals[2] if len(vals) > 2 else ""
             elapsed = ""
-            if last_time:
-                try:
-                    done_dt = datetime.strptime(f"{date_str} {last_time}", "%Y-%m-%d %H:%M:%S")
+            if display_time:
+                logs = db_fetch_routine_logs(rt_id, date_str)
+                raw_time = logs[-1]["done_time"] if logs else ""
+                done_dt = parse_done_datetime(date_str, raw_time)
+                if done_dt:
                     elapsed = format_elapsed((now - done_dt).total_seconds())
-                except ValueError:
-                    pass
-            elif vals[2].startswith("0/"):
+            else:
                 prev_dt = db_get_prev_routine_done_time(rt_id, date_str)
                 if prev_dt:
                     elapsed = format_elapsed((now - prev_dt).total_seconds())
@@ -2845,7 +2855,7 @@ class AutoExecApp:
         self.log(f"일정 삭제: {rt['name']}")
 
     def _complete_routine(self):
-        """선택한 과제의 해당 날짜에 완료 1회 추가"""
+        """선택한 일정의 해당 날짜에 완료 처리"""
         rt = self._get_selected_routine()
         if not rt:
             return
@@ -2853,22 +2863,17 @@ class AutoExecApp:
         if not active_date:
             return
         logs = db_fetch_routine_logs(rt["id"], active_date)
-        done = len(logs)
-        if done >= rt["daily_count"]:
+        if logs:
             messagebox.showinfo("알림", f"'{rt['name']}' 은(는) {active_date} 이미 완료되었습니다.",
                                 parent=self.root)
             return
-        next_seq = done + 1
-        db_add_routine_log(rt["id"], active_date, next_seq)
-        if next_seq >= rt["daily_count"]:
-            self.log(f"일정 완료: {rt['name']} ({active_date} {next_seq}/{rt['daily_count']})")
-            # 1회 일정은 완료 시 비활성화
-            if rt.get("repeat_type", "once") == "once":
-                db_upsert_routine(rt["id"], rt["name"], rt["daily_count"], 0,
-                                  rt.get("start_date", ""), "once")
-                self.log(f"1회 일정 완료 → 비활성화: {rt['name']}")
-        else:
-            self.log(f"일정 진행: {rt['name']} ({active_date} {next_seq}/{rt['daily_count']})")
+        db_add_routine_log(rt["id"], active_date, 1)
+        self.log(f"일정 완료: {rt['name']} ({active_date})")
+        # 1회 일정은 완료 시 비활성화
+        if rt.get("repeat_type", "once") == "once":
+            db_upsert_routine(rt["id"], rt["name"], 1, 0,
+                              rt.get("start_date", ""), "once")
+            self.log(f"1회 일정 완료 → 비활성화: {rt['name']}")
         self._refresh_routine_list()
 
     def _undo_routine(self):
@@ -4150,7 +4155,8 @@ class AutoExecApp:
 
             self.tray_icon = pystray.Icon("AutoExec", img, "실행 관리 서버")
             self.tray_icon.menu = pystray.Menu(
-                pystray.MenuItem("열기", lambda icon, item: self.root.after(0, self._show_window), default=True),
+                pystray.MenuItem("열기", lambda icon, item: self.root.after(0, self._show_window), default=True, visible=False),
+                pystray.MenuItem("재실행", lambda icon, item: self.root.after(0, self._restart_app)),
                 pystray.MenuItem("종료", lambda icon, item: self.root.after(0, self._force_quit)),
             )
             threading.Thread(target=self.tray_icon.run, daemon=True).start()
@@ -4161,6 +4167,18 @@ class AutoExecApp:
         self.hidden = False
         self.root.deiconify()
         self.root.lift()
+
+    def _restart_app(self):
+        """애플리케이션 재실행"""
+        self._save_window()
+        # mutex 해제 후 새 프로세스 시작 (중복 실행 방지 우회)
+        if hasattr(self, "_mutex") and self._mutex:
+            ctypes.windll.kernel32.CloseHandle(self._mutex)
+            self._mutex = None
+        subprocess.Popen([sys.executable] + sys.argv)
+        if self.tray_icon:
+            self.tray_icon.stop()
+        self.root.destroy()
 
     def _force_quit(self):
         self._save_window()
@@ -4217,5 +4235,6 @@ if __name__ == "__main__":
 
     db_init()
     app = AutoExecApp()
+    app._mutex = _mutex
     app.run()
     ctypes.windll.kernel32.CloseHandle(_mutex)
