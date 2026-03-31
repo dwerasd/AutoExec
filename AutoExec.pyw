@@ -333,9 +333,6 @@ def format_elapsed(seconds):
         return ""
     minutes = int(seconds // 60)
     hours = minutes // 60
-    days = hours // 24
-    if days > 0:
-        return f"{days}일 {hours % 24}시간"
     if hours > 0:
         return f"{hours}시간 {minutes % 60}분"
     return f"{minutes}분"
@@ -3596,14 +3593,24 @@ class AutoExecApp:
         self.root.after(50, self._git_auto_download_on_paste)
 
     def _git_auto_download_on_paste(self):
-        """붙여넣기된 텍스트가 GitHub URL이면 자동 다운로드"""
-        url = self.git_url_var.get().strip()
-        if url and "github.com/" in url:
-            if not self._is_valid_git_url(url):
-                self.git_url_var.set("")
-                self.log("[GitHub] 잘못된 붙여넣기 감지 (URL이 아닌 텍스트)")
-                return
+        """붙여넣기된 텍스트에서 GitHub URL을 추출하여 자동 다운로드"""
+        text = self.git_url_var.get().strip()
+        if not text or "github.com/" not in text:
+            return
+        extracted = self._extract_git_url(text)
+        if extracted:
+            self.git_url_var.set(extracted)
             self._git_download()
+        else:
+            self.git_url_var.set("")
+            self.log("[GitHub] 잘못된 붙여넣기 감지 (GitHub URL을 찾을 수 없음)")
+
+    @staticmethod
+    def _extract_git_url(text: str) -> str | None:
+        """텍스트에서 GitHub URL을 추출. 없으면 None 반환"""
+        import re
+        m = re.search(r'https?://github\.com/[\w.\-]+/[\w.\-]+', text)
+        return m.group(0) if m else None
 
     @staticmethod
     def _is_valid_git_url(text: str) -> bool:
