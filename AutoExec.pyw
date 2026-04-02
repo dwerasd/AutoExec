@@ -338,17 +338,6 @@ def format_elapsed(seconds):
     return f"{minutes}분"
 
 
-def db_update_name(table, record_id, new_name):
-    """테이블의 name 컬럼만 업데이트"""
-    if table not in ("tasks", "window_profiles", "routines"):
-        return
-    conn = get_db_connection()
-    try:
-        conn.execute(f"UPDATE [{table}] SET name=? WHERE id=?", (new_name, record_id))
-        conn.commit()
-    finally:
-        conn.close()
-
 
 # ═══════════════════════════════════════════════════════════
 #  과제 (루틴) DB 헬퍼
@@ -2648,45 +2637,6 @@ class AutoExecApp:
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    # ─── 인라인 편집 ──────────────────────────────────────
-    def _inline_edit(self, tree, event, editable_col, on_save):
-        """Treeview 셀 클릭 시 인라인 Entry 오버레이로 편집
-        editable_col: 편집 가능한 컬럼명
-        on_save(iid, new_value): 저장 콜백"""
-        region = tree.identify_region(event.x, event.y)
-        if region != "cell":
-            return
-        item = tree.identify_row(event.y)
-        column = tree.identify_column(event.x)
-        if not item or not column:
-            return
-        col_idx = int(column.replace("#", "")) - 1
-        col_name = tree["columns"][col_idx]
-        if col_name != editable_col:
-            return
-        bbox = tree.bbox(item, column)
-        if not bbox:
-            return
-        current = tree.set(item, col_name)
-        entry = ttk.Entry(tree)
-        entry.insert(0, current)
-        entry.select_range(0, tk.END)
-        entry.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
-        entry.focus_set()
-
-        def _save(e=None):
-            new_val = entry.get().strip()
-            entry.destroy()
-            if new_val and new_val != current:
-                on_save(item, new_val)
-
-        def _cancel(e=None):
-            entry.destroy()
-
-        entry.bind("<Return>", _save)
-        entry.bind("<Escape>", _cancel)
-        entry.bind("<FocusOut>", _save)
-
     # ─── 로그 ────────────────────────────────────────────
     def _clear_log(self):
         """로그 텍스트 전체 삭제"""
@@ -2793,17 +2743,7 @@ class AutoExecApp:
         return parts[1] if len(parts) > 1 else None
 
     def _on_routine_double_click(self, event):
-        """더블클릭: 내용 컬럼이면 인라인 편집, 아니면 완료 처리"""
-        col = self.routine_tree.identify_column(event.x)
-        col_idx = int(col.replace("#", "")) - 1
-        col_name = self.routine_tree["columns"][col_idx]
-        if col_name == "내용":
-            def _save(iid, new_val):
-                rt_id = int(iid.split(":")[0])
-                db_update_name("routines", rt_id, new_val)
-                self._refresh_routine_list()
-            self._inline_edit(self.routine_tree, event, "내용", _save)
-            return "break"
+        """더블클릭: 완료 처리"""
         self._complete_routine()
 
     def _on_routine_right_click(self, event):
@@ -3116,19 +3056,10 @@ class AutoExecApp:
         return True
 
     def _on_task_double_click(self, event):
-        """더블클릭: 이름 컬럼 → 인라인 편집, 그 외 기존 동작"""
+        """더블클릭: 기존 동작 (폴더 열기 / 창 활성화)"""
         item = self.task_tree.identify_row(event.y)
         if not item:
             return
-        col = self.task_tree.identify_column(event.x)
-        col_idx = int(col.replace("#", "")) - 1
-        col_name = self.task_tree["columns"][col_idx]
-        if col_name == "이름":
-            def _save(iid, new_val):
-                db_update_name("tasks", int(iid), new_val)
-                self._refresh_task_list()
-            self._inline_edit(self.task_tree, event, "이름", _save)
-            return "break"
         task_id = int(item)
         task = next((t for t in self.task_data if t["id"] == task_id), None)
         if not task:
@@ -3341,19 +3272,10 @@ class AutoExecApp:
         menu.tk_popup(event.x_root, event.y_root)
 
     def _on_profile_double_click(self, event):
-        """더블클릭: 이름 컬럼 → 인라인 편집, 그 외 → 창 이동"""
+        """더블클릭: 창 이동"""
         item = self.profile_tree.identify_row(event.y)
         if not item:
             return
-        col = self.profile_tree.identify_column(event.x)
-        col_idx = int(col.replace("#", "")) - 1
-        col_name = self.profile_tree["columns"][col_idx]
-        if col_name == "이름":
-            def _save(iid, new_val):
-                db_update_name("window_profiles", int(iid), new_val)
-                self._refresh_profile_list()
-            self._inline_edit(self.profile_tree, event, "이름", _save)
-            return "break"
         profile_id = int(item)
         profile = next((p for p in self.profile_data if p["id"] == profile_id), None)
         if not profile:
