@@ -203,7 +203,7 @@ def get_unique_path(base_path: str, repo_name: str, owner: str) -> str:
     
     # 기존 폴더가 같은 owner의 저장소인지 확인
     existing_origin = get_remote_origin(target_path)
-    if existing_origin and f"/{owner}/{repo_name}" in existing_origin.lower():
+    if existing_origin and f"/{owner}/{repo_name}".lower() in existing_origin.lower():
         # 같은 저장소면 그대로 사용
         return target_path
     

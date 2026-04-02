@@ -2377,6 +2377,7 @@ class AutoExecApp:
         ttk.Label(git_frame, text="깃허브:").grid(row=0, column=0, padx=(0, 3))
 
         self.git_url_var = tk.StringVar()
+        self._git_download_queue: list[str] = []
         self.git_url_entry = ttk.Entry(git_frame, textvariable=self.git_url_var, font=("Consolas", 9))
         self.git_url_entry.grid(row=0, column=1, sticky=tk.EW, padx=(0, 3))
         self.git_url_entry.bind("<Return>", lambda e: self._git_download())
@@ -3519,30 +3520,49 @@ class AutoExecApp:
         text = self.git_url_var.get().strip()
         if not text or "github.com/" not in text:
             return
-        extracted = self._extract_git_url(text)
-        if extracted:
-            self.git_url_var.set(extracted)
+        urls = self._extract_git_urls(text)
+        if not urls:
+            self.git_url_var.set("")
+            self.log("[GitHub] 잘못된 붙여넣기 감지 (GitHub URL을 찾을 수 없음)")
+            return
+        if len(urls) == 1:
+            self.git_url_var.set(urls[0])
             self._git_download()
         else:
             self.git_url_var.set("")
-            self.log("[GitHub] 잘못된 붙여넣기 감지 (GitHub URL을 찾을 수 없음)")
+            self._git_download_queue = list(urls)
+            self.log(f"[GitHub] {len(urls)}개 저장소 일괄 다운로드 시작")
+            self._git_download_next()
+
+    def _git_download_next(self):
+        """큐에서 다음 URL을 꺼내 다운로드"""
+        if not self._git_download_queue:
+            self.log("[GitHub] 일괄 다운로드 완료")
+            return
+        url = self._git_download_queue.pop(0)
+        self.git_url_var.set(url)
+        self._git_download(on_done=self._git_download_next)
 
     @staticmethod
-    def _extract_git_url(text: str) -> str | None:
-        """텍스트에서 GitHub URL을 추출. 없으면 None 반환"""
+    def _extract_git_urls(text: str) -> list[str]:
+        """텍스트에서 모든 GitHub URL을 추출. https:// 없어도 인식"""
         import re
-        m = re.search(r'https?://github\.com/[\w.\-]+/[\w.\-]+', text)
-        return m.group(0) if m else None
+        matches = re.findall(r'(?:https?://)?github\.com/[\w.\-]+/[\w.\-]+', text)
+        urls = []
+        for m in matches:
+            url = m if m.startswith("http") else "https://" + m
+            # 중복 제거
+            if url not in urls:
+                urls.append(url)
+        return urls
 
     @staticmethod
     def _is_valid_git_url(text: str) -> bool:
-        """GitHub URL 유효성 검증 (여러 줄이거나 URL 형식이 아니면 False)"""
-        if "\n" in text or "\r" in text:
-            return False
+        """GitHub URL 유효성 검증"""
         import re
-        return bool(re.match(r'^https?://github\.com/[\w.\-]+/[\w.\-]+/?$', text))
+        return bool(re.match(r'^(?:https?://)?github\.com/[\w.\-]+/[\w.\-]+/?$', text))
 
-    def _git_download(self):
+    def _git_download(self, on_done=None):
         """GitHub 저장소 다운로드 (gitclone.py 호출)"""
         url = self.git_url_var.get().strip()
         if not url:
@@ -3550,6 +3570,9 @@ class AutoExecApp:
         if not self._is_valid_git_url(url):
             self.log("[GitHub] 잘못된 URL 형식입니다")
             return
+        if not url.startswith("http"):
+            url = "https://" + url
+            self.git_url_var.set(url)
         # 버튼 비활성화
         self.git_dl_btn.config(state=tk.DISABLED)
         self.git_url_entry.config(state=tk.DISABLED)
@@ -3569,15 +3592,15 @@ class AutoExecApp:
                 )
                 success = result.returncode == 0
                 output = (result.stdout + result.stderr).strip()
-                self.root.after(0, lambda: self._git_download_done(success, output))
+                self.root.after(0, lambda: self._git_download_done(success, output, on_done))
             except subprocess.TimeoutExpired:
-                self.root.after(0, lambda: self._git_download_done(False, "타임아웃 (120초 초과)"))
+                self.root.after(0, lambda: self._git_download_done(False, "타임아웃 (120초 초과)", on_done))
             except Exception as e:
-                self.root.after(0, lambda: self._git_download_done(False, str(e)))
+                self.root.after(0, lambda: self._git_download_done(False, str(e), on_done))
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _git_download_done(self, success, output):
+    def _git_download_done(self, success, output, on_done=None):
         """다운로드 완료 콜백 (메인 스레드)"""
         self.git_dl_btn.config(state=tk.NORMAL)
         self.git_url_entry.config(state=tk.NORMAL)
@@ -3596,8 +3619,11 @@ class AutoExecApp:
                 self.log(f"[GitHub] 이미 존재하는 경로: {saved_path}")
             else:
                 self.log(f"[GitHub] 다운로드 실패: {output[:200]}")
-                messagebox.showerror("GitHub 다운로드 실패", output[:500], parent=self.root)
-        self.git_url_entry.focus_set()
+        # 큐에 다음 항목이 있으면 계속 진행
+        if on_done:
+            on_done()
+        else:
+            self.git_url_entry.focus_set()
 
     def _run_task(self, skip_activation=False):
         """선택한 자동실행 작업을 즉시 테스트 실행 (폴더면 열기, 실행중이면 활성화)"""
