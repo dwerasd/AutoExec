@@ -3075,7 +3075,9 @@ class AutoExecApp:
             if proc and proc.poll() is None and self._activate_window_by_pid(proc.pid):
                 self.log(f"[자동실행] {task['name']} 창 활성화")
                 return
-        if task["enabled"]:
+        if executable.lower().endswith(".pyw"):
+            self._run_task()
+        elif task["enabled"]:
             self._edit_task()
         else:
             self._run_task(skip_activation=True)
