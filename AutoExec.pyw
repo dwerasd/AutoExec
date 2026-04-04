@@ -2503,6 +2503,7 @@ class AutoExecApp:
         routine_frame.rowconfigure(0, weight=1)
 
         rt_cols = ("날짜", "내용", "완료시간", "경과")
+        self._hidden_routine_dates = set()  # UI에서만 숨긴 (routine_id, date_str) 세트
         self.routine_tree = ttk.Treeview(routine_frame, columns=rt_cols, show="headings", height=8)
         self.routine_tree.heading("날짜", text="날짜")
         self.routine_tree.heading("내용", text="내용")
@@ -2695,6 +2696,8 @@ class AutoExecApp:
                     if prev_dt:
                         elapsed = format_elapsed((now - prev_dt).total_seconds())
                 iid = f"{rt['id']}:{date_str}"
+                if (rt["id"], date_str) in self._hidden_routine_dates:
+                    continue
                 tag = ("done",) if done >= 1 else ("missed",) if is_past else ()
                 rows.append((date_str, rt.get("sort_order", 0), iid,
                              (date_str, rt["name"], display_time, elapsed), tag))
@@ -2754,11 +2757,11 @@ class AutoExecApp:
             return
         self.routine_tree.selection_set(item)
         menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label="확인", command=self._complete_routine)
-        menu.add_command(label="취소", command=self._undo_routine)
+        menu.add_command(label="완료 취소", command=self._undo_routine)
+        menu.add_command(label="목록에서 삭제", command=self._hide_routine_date)
         menu.add_separator()
-        menu.add_command(label="편집", command=self._edit_routine)
-        menu.add_command(label="삭제", command=self._delete_routine)
+        menu.add_command(label="일정 편집", command=self._edit_routine)
+        menu.add_command(label="일정 삭제", command=self._delete_routine)
         menu.tk_popup(event.x_root, event.y_root)
 
     def _add_routine(self):
@@ -2782,11 +2785,23 @@ class AutoExecApp:
             self._refresh_routine_list()
             self.log(f"일정 수정: {r['name']}")
 
+    def _hide_routine_date(self):
+        """선택한 날짜 행을 UI 목록에서만 숨김 (DB 삭제 없음)"""
+        rt = self._get_selected_routine()
+        if not rt:
+            return
+        active_date = self._get_selected_routine_date()
+        if not active_date:
+            return
+        self._hidden_routine_dates.add((rt["id"], active_date))
+        self.routine_tree.delete(f"{rt['id']}:{active_date}")
+        self.log(f"목록에서 숨김: {rt['name']} ({active_date})")
+
     def _delete_routine(self):
         rt = self._get_selected_routine()
         if not rt:
             return
-        if not messagebox.askyesno("확인", f"'{rt['name']}' 일정을 삭제하시겠습니까?", parent=self.root):
+        if not messagebox.askyesno("확인", f"'{rt['name']}' 일정을 완전히 삭제하시겠습니까?\n(모든 기록도 함께 삭제됩니다)", parent=self.root):
             return
         db_delete_routine(rt["id"])
         self._refresh_routine_list()
