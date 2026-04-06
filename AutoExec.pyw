@@ -2693,7 +2693,7 @@ class AutoExecApp:
                         elapsed = format_elapsed((now - done_dt).total_seconds())
                 elif done == 0:
                     prev_dt = db_get_prev_routine_done_time(rt["id"], date_str)
-                    if prev_dt:
+                    if prev_dt and prev_dt.date() < now.date():
                         elapsed = format_elapsed((now - prev_dt).total_seconds())
                 iid = f"{rt['id']}:{date_str}"
                 if (rt["id"], date_str) in self._hidden_routine_dates:
@@ -2723,7 +2723,7 @@ class AutoExecApp:
                     elapsed = format_elapsed((now - done_dt).total_seconds())
             else:
                 prev_dt = db_get_prev_routine_done_time(rt_id, date_str)
-                if prev_dt:
+                if prev_dt and prev_dt.date() < now.date():
                     elapsed = format_elapsed((now - prev_dt).total_seconds())
             self.routine_tree.set(iid, "경과", elapsed)
 
@@ -3781,6 +3781,7 @@ class AutoExecApp:
         """Windows 부팅 후 1회 실행 태스크 처리"""
         now = datetime.now()
         # Windows 부팅 시각 계산
+        ctypes.windll.kernel32.GetTickCount64.restype = ctypes.c_uint64
         uptime_ms = ctypes.windll.kernel32.GetTickCount64()
         boot_time = now - timedelta(milliseconds=uptime_ms)
         now_str = now.strftime("%Y-%m-%d %H:%M:%S")
