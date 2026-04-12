@@ -375,11 +375,10 @@ def db_upsert_routine(routine_id, name, daily_count, enabled=1, start_date="", r
 
 
 def db_delete_routine(routine_id):
-    """과제 삭제 (로그도 함께 삭제)"""
+    """과제 비활성화 (과거 기록 보존, 일정만 중단)"""
     conn = get_db_connection()
     try:
-        conn.execute("DELETE FROM routine_logs WHERE routine_id=?", (routine_id,))
-        conn.execute("DELETE FROM routines WHERE id=?", (routine_id,))
+        conn.execute("UPDATE routines SET enabled=0 WHERE id=?", (routine_id,))
         conn.commit()
     finally:
         conn.close()
@@ -2417,6 +2416,7 @@ class AutoExecApp:
         self.task_tree.config(yscrollcommand=task_scroll.set)
         self.task_tree.bind("<Double-1>", self._on_task_double_click)
         self.task_tree.bind("<Button-3>", self._on_task_right_click)
+        self.task_tree.bind("<Delete>", self._delete_task)
 
         task_btn_frame = ttk.Frame(lf_task)
         task_btn_frame.grid(row=1, column=0, sticky=tk.W, pady=(3, 0))
@@ -2462,8 +2462,8 @@ class AutoExecApp:
         move_scroll.grid(row=0, column=1, sticky=tk.NS)
         self.profile_tree.config(yscrollcommand=move_scroll.set)
         self.profile_tree.bind("<Double-1>", self._on_profile_double_click)
-
         self.profile_tree.bind("<Button-3>", self._on_profile_right_click)
+        self.profile_tree.bind("<Delete>", self._delete_profile)
 
         move_btn_frame = ttk.Frame(lf_move)
         move_btn_frame.grid(row=1, column=0, sticky=tk.W, pady=(3, 0))
@@ -2521,6 +2521,7 @@ class AutoExecApp:
         self.routine_tree.config(yscrollcommand=rt_scroll.set)
         self.routine_tree.bind("<Double-1>", self._on_routine_double_click)
         self.routine_tree.bind("<Button-3>", self._on_routine_right_click)
+        self.routine_tree.bind("<Delete>", self._hide_routine_date)
 
         routine_btn_frame = ttk.Frame(lf_routine)
         routine_btn_frame.grid(row=1, column=0, sticky=tk.W, pady=(3, 0))
@@ -2755,7 +2756,8 @@ class AutoExecApp:
         item = self.routine_tree.identify_row(event.y)
         if not item:
             return
-        self.routine_tree.selection_set(item)
+        if item not in self.routine_tree.selection():
+            self.routine_tree.selection_set(item)
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label="완료 취소", command=self._undo_routine)
         menu.add_command(label="목록에서 삭제", command=self._hide_routine_date)
@@ -2785,27 +2787,57 @@ class AutoExecApp:
             self._refresh_routine_list()
             self.log(f"일정 수정: {r['name']}")
 
-    def _hide_routine_date(self):
+    def _hide_routine_date(self, event=None):
         """선택한 날짜 행을 UI 목록에서만 숨김 (DB 삭제 없음)"""
-        rt = self._get_selected_routine()
-        if not rt:
+        sel = self.routine_tree.selection()
+        if not sel:
             return
-        active_date = self._get_selected_routine_date()
-        if not active_date:
-            return
-        self._hidden_routine_dates.add((rt["id"], active_date))
-        self.routine_tree.delete(f"{rt['id']}:{active_date}")
-        self.log(f"목록에서 숨김: {rt['name']} ({active_date})")
+        hidden = []
+        for iid in sel:
+            parts = iid.split(":")
+            if len(parts) < 2:
+                continue
+            rt_id = int(parts[0])
+            active_date = parts[1]
+            rt = next((r for r in self.routine_data if r["id"] == rt_id), None)
+            if not rt:
+                continue
+            self._hidden_routine_dates.add((rt_id, active_date))
+            self.routine_tree.delete(iid)
+            hidden.append(f"{rt['name']}({active_date})")
+        if hidden:
+            self.log(f"목록에서 숨김: {', '.join(hidden)}")
 
-    def _delete_routine(self):
-        rt = self._get_selected_routine()
-        if not rt:
+    def _delete_routine(self, event=None):
+        sel = self.routine_tree.selection()
+        if not sel:
+            messagebox.showinfo("알림", "일정을 선택하세요.", parent=self.root)
             return
-        if not messagebox.askyesno("확인", f"'{rt['name']}' 일정을 완전히 삭제하시겠습니까?\n(모든 기록도 함께 삭제됩니다)", parent=self.root):
+        # 선택된 항목에서 고유 일정 ID 추출
+        rt_ids_seen = set()
+        routines = []
+        for iid in sel:
+            rt_id = int(iid.split(":")[0])
+            if rt_id in rt_ids_seen:
+                continue
+            rt_ids_seen.add(rt_id)
+            for rt in self.routine_data:
+                if rt["id"] == rt_id:
+                    routines.append(rt)
+                    break
+        if not routines:
             return
-        db_delete_routine(rt["id"])
+        if len(routines) == 1:
+            msg = f"'{routines[0]['name']}' 일정을 중단하시겠습니까?\n(과거 기록은 보존됩니다)"
+        else:
+            msg = f"{len(routines)}개 일정을 중단하시겠습니까?\n(과거 기록은 보존됩니다)\n" + ", ".join(r["name"] for r in routines)
+        if not messagebox.askyesno("확인", msg, parent=self.root):
+            return
+        for rt in routines:
+            db_delete_routine(rt["id"])
         self._refresh_routine_list()
-        self.log(f"일정 삭제: {rt['name']}")
+        names = ", ".join(rt["name"] for rt in routines)
+        self.log(f"일정 삭제: {names}")
 
     def _complete_routine(self):
         """선택한 일정의 해당 날짜에 완료 처리"""
@@ -3102,7 +3134,8 @@ class AutoExecApp:
         item = self.task_tree.identify_row(event.y)
         if not item:
             return
-        self.task_tree.selection_set(item)
+        if item not in self.task_tree.selection():
+            self.task_tree.selection_set(item)
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label="실행", command=self._run_task)
         menu.add_command(label="폴더 열기", command=self._open_task_folder)
@@ -3128,14 +3161,30 @@ class AutoExecApp:
             self._refresh_task_list()
             self.log(f"자동실행 수정: {r['name']}")
 
-    def _delete_task(self):
-        task = self._get_selected_task()
-        if not task:
+    def _delete_task(self, event=None):
+        sel = self.task_tree.selection()
+        if not sel:
+            messagebox.showinfo("알림", "자동실행 항목을 선택하세요.", parent=self.root)
             return
-        if messagebox.askyesno("삭제 확인", f"'{task['name']}' 작업을 삭제하시겠습니까?", parent=self.root):
-            db_delete_task(task["id"])
+        tasks = []
+        for iid in sel:
+            task_id = int(iid)
+            for t in self.task_data:
+                if t["id"] == task_id:
+                    tasks.append(t)
+                    break
+        if not tasks:
+            return
+        if len(tasks) == 1:
+            msg = f"'{tasks[0]['name']}' 작업을 삭제하시겠습니까?"
+        else:
+            msg = f"{len(tasks)}개 작업을 삭제하시겠습니까?\n" + ", ".join(t["name"] for t in tasks)
+        if messagebox.askyesno("삭제 확인", msg, parent=self.root):
+            for t in tasks:
+                db_delete_task(t["id"])
             self._refresh_task_list()
-            self.log(f"자동실행 삭제: {task['name']}")
+            names = ", ".join(t["name"] for t in tasks)
+            self.log(f"자동실행 삭제: {names}")
 
     def _move_task(self, direction):
         """자동실행 순서 이동 (direction: -1=위, 1=아래)"""
@@ -3251,14 +3300,30 @@ class AutoExecApp:
             self._refresh_profile_list()
             self.log(f"[프로파일] 수정: {r['name']} ({r['exe_name']})")
 
-    def _delete_profile(self):
-        profile = self._get_selected_profile()
-        if not profile:
+    def _delete_profile(self, event=None):
+        sel = self.profile_tree.selection()
+        if not sel:
+            messagebox.showinfo("알림", "프로파일을 선택하세요.", parent=self.root)
             return
-        if messagebox.askyesno("삭제 확인", f"'{profile['name']}' 프로파일을 삭제하시겠습니까?", parent=self.root):
-            db_delete_profile(profile["id"])
+        profiles = []
+        for iid in sel:
+            profile_id = int(iid)
+            for p in self.profile_data:
+                if p["id"] == profile_id:
+                    profiles.append(p)
+                    break
+        if not profiles:
+            return
+        if len(profiles) == 1:
+            msg = f"'{profiles[0]['name']}' 프로파일을 삭제하시겠습니까?"
+        else:
+            msg = f"{len(profiles)}개 프로파일을 삭제하시겠습니까?\n" + ", ".join(p["name"] for p in profiles)
+        if messagebox.askyesno("삭제 확인", msg, parent=self.root):
+            for p in profiles:
+                db_delete_profile(p["id"])
             self._refresh_profile_list()
-            self.log(f"[프로파일] 삭제: {profile['name']}")
+            names = ", ".join(p["name"] for p in profiles)
+            self.log(f"[프로파일] 삭제: {names}")
 
     def _reorder_profile(self, direction):
         sel = self.profile_tree.selection()
@@ -3283,7 +3348,8 @@ class AutoExecApp:
         item = self.profile_tree.identify_row(event.y)
         if not item:
             return
-        self.profile_tree.selection_set(item)
+        if item not in self.profile_tree.selection():
+            self.profile_tree.selection_set(item)
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label="편집", command=self._edit_profile)
         menu.add_command(label="삭제", command=self._delete_profile)
