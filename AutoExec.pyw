@@ -191,6 +191,13 @@ def db_init():
             UNIQUE(routine_id, log_date, seq)
         )
     """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS routine_hidden (
+            routine_id INTEGER NOT NULL,
+            hidden_date TEXT NOT NULL,
+            UNIQUE(routine_id, hidden_date)
+        )
+    """)
     # move_targets → window_profiles + window_rules 마이그레이션
     try:
         cur.execute("SELECT COUNT(*) as cnt FROM window_profiles")
@@ -380,6 +387,30 @@ def db_delete_routine(routine_id):
     try:
         conn.execute("UPDATE routines SET enabled=0 WHERE id=?", (routine_id,))
         conn.commit()
+    finally:
+        conn.close()
+
+
+def db_hide_routine_date(routine_id, date_str):
+    """일정 날짜 숨김 저장"""
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO routine_hidden (routine_id, hidden_date) VALUES (?, ?)",
+            (routine_id, date_str),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def db_fetch_hidden_routine_dates():
+    """숨김 처리된 (routine_id, date) 세트 조회"""
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT routine_id, hidden_date FROM routine_hidden")
+        return {(row["routine_id"], row["hidden_date"]) for row in cur.fetchall()}
     finally:
         conn.close()
 
@@ -2503,7 +2534,7 @@ class AutoExecApp:
         routine_frame.rowconfigure(0, weight=1)
 
         rt_cols = ("날짜", "내용", "완료시간", "경과")
-        self._hidden_routine_dates = set()  # UI에서만 숨긴 (routine_id, date_str) 세트
+        self._hidden_routine_dates = db_fetch_hidden_routine_dates()
         self.routine_tree = ttk.Treeview(routine_frame, columns=rt_cols, show="headings", height=8)
         self.routine_tree.heading("날짜", text="날짜")
         self.routine_tree.heading("내용", text="내용")
@@ -2803,6 +2834,7 @@ class AutoExecApp:
             if not rt:
                 continue
             self._hidden_routine_dates.add((rt_id, active_date))
+            db_hide_routine_date(rt_id, active_date)
             self.routine_tree.delete(iid)
             hidden.append(f"{rt['name']}({active_date})")
         if hidden:
