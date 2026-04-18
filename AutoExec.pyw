@@ -3140,6 +3140,8 @@ class AutoExecApp:
         item = self.task_tree.identify_row(event.y)
         if not item:
             return
+        # 더블클릭한 항목을 선택 상태로 동기화
+        self.task_tree.selection_set(item)
         task_id = int(item)
         task = next((t for t in self.task_data if t["id"] == task_id), None)
         if not task:
@@ -3155,7 +3157,7 @@ class AutoExecApp:
                 self.log(f"[자동실행] {task['name']} 창 활성화")
                 return
         if executable.lower().endswith(".pyw"):
-            self._run_task()
+            self._run_task(skip_activation=True)
         elif task["enabled"]:
             self._edit_task()
         else:
