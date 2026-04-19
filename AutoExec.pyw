@@ -2396,6 +2396,7 @@ class AutoExecApp:
 
         # ── 메뉴바 ──
         self.var_topmost = tk.BooleanVar(value=self.settings["window"].get("topmost", False))
+        self.var_git_open_folder = tk.BooleanVar(value=bool(self.settings.get("git_open_folder", False)))
         self._build_menubar()
         self._apply_topmost()
 
@@ -2416,9 +2417,7 @@ class AutoExecApp:
         self.git_dl_btn = ttk.Button(git_frame, text="Git", width=4, command=self._git_download)
         self.git_dl_btn.grid(row=0, column=2)
 
-        self.var_git_open_folder = tk.BooleanVar(value=bool(self.settings.get("git_open_folder", False)))
-        ttk.Checkbutton(git_frame, text="완료시 폴더 열기", variable=self.var_git_open_folder,
-                        command=self._save_git_open_folder).grid(row=0, column=3, padx=(3, 0))
+        ttk.Button(git_frame, text="깃 다운 폴더 열기", command=self._open_git_root_folder).grid(row=0, column=3, padx=(3, 0))
 
         # ── row 2: 자동실행 (전체 폭) ──
         lf_task = ttk.LabelFrame(root, text="자동실행", padding=5)
@@ -2605,6 +2604,19 @@ class AutoExecApp:
         self.settings["git_open_folder"] = self.var_git_open_folder.get()  # type: ignore[assignment]
         save_local_settings(self.settings)
 
+    def _open_git_root_folder(self):
+        """깃허브 다운로드 루트 폴더를 연다 (.env의 CLONE_BASE_PATH 우선)"""
+        clone_base = os.getenv("CLONE_BASE_PATH", "").strip()
+        if not clone_base:
+            clone_base = os.path.join(SCRIPT_DIR, "data")
+        if not os.path.isdir(clone_base):
+            try:
+                os.makedirs(clone_base, exist_ok=True)
+            except OSError as e:
+                self.log(f"[GitHub] 루트 폴더 생성 실패: {e}")
+                return
+        subprocess.Popen(["explorer.exe", os.path.normpath(clone_base)])
+
     # ─── 최상위 ──────────────────────────────────────────
     def _toggle_topmost(self):
         self.settings["window"]["topmost"] = self.var_topmost.get()
@@ -2621,6 +2633,8 @@ class AutoExecApp:
         # 설정 메뉴
         menu_settings = tk.Menu(menubar, tearoff=0)
         menu_settings.add_checkbutton(label="최상위", variable=self.var_topmost, command=self._toggle_topmost)
+        menu_settings.add_checkbutton(label="깃 다운시 폴더 열기", variable=self.var_git_open_folder,
+                                      command=self._save_git_open_folder)
         menu_settings.add_command(label="인트라넷 등록", command=self._menu_intranet)
         menubar.add_cascade(label="설정", menu=menu_settings)
 
@@ -3654,6 +3668,8 @@ class AutoExecApp:
     def _git_download_next(self):
         """큐에서 다음 URL을 꺼내 다운로드"""
         if not self._git_download_queue:
+            self.git_url_var.set("")
+            self.git_url_entry.focus_set()
             self.log("[GitHub] 일괄 다운로드 완료")
             return
         url = self._git_download_queue.pop(0)
@@ -3683,9 +3699,13 @@ class AutoExecApp:
         """GitHub 저장소 다운로드 (gitclone.py 호출)"""
         url = self.git_url_var.get().strip()
         if not url:
+            if on_done:
+                self.root.after(0, on_done)
             return
         if not self._is_valid_git_url(url):
             self.log("[GitHub] 잘못된 URL 형식입니다")
+            if on_done:
+                self.root.after(0, on_done)
             return
         if not url.startswith("http"):
             url = "https://" + url
@@ -4244,11 +4264,20 @@ class AutoExecApp:
     def _restart_app(self):
         """애플리케이션 재실행"""
         self._save_window()
-        # mutex 해제 후 새 프로세스 시작 (중복 실행 방지 우회)
+        # 뮤텍스 소유권 및 핸들 해제
         if hasattr(self, "_mutex") and self._mutex:
+            ctypes.windll.kernel32.ReleaseMutex(self._mutex)
             ctypes.windll.kernel32.CloseHandle(self._mutex)
             self._mutex = None
-        subprocess.Popen([sys.executable] + sys.argv)
+        # 절대 경로 + --restart 플래그로 재실행 (레이스 컨디션 회피를 위해 새 프로세스가 대기하도록)
+        script_path = os.path.abspath(sys.argv[0])
+        DETACHED_PROCESS = 0x00000008
+        subprocess.Popen(
+            [sys.executable, script_path] + sys.argv[1:] + ["--restart"],
+            cwd=SCRIPT_DIR,
+            close_fds=True,
+            creationflags=DETACHED_PROCESS,
+        )
         if self.tray_icon:
             self.tray_icon.stop()
         self.root.destroy()
@@ -4274,8 +4303,24 @@ class AutoExecApp:
 #  엔트리포인트
 # ═══════════════════════════════════════════════════════════
 if __name__ == "__main__":
+    # 재실행 플래그: 이전 프로세스가 뮤텍스를 해제할 때까지 대기
+    _is_restart = "--restart" in sys.argv
+    if _is_restart:
+        sys.argv.remove("--restart")
+
     # 중복 실행 방지 (Windows Named Mutex)
     _mutex = ctypes.windll.kernel32.CreateMutexW(None, True, "AutoExec_Python")
+    if _is_restart and ctypes.windll.kernel32.GetLastError() == 183:
+        # 재실행 시 최대 5초까지 이전 프로세스 종료 대기
+        import time
+        ctypes.windll.kernel32.CloseHandle(_mutex)
+        for _ in range(20):
+            time.sleep(0.25)
+            _mutex = ctypes.windll.kernel32.CreateMutexW(None, True, "AutoExec_Python")
+            if ctypes.windll.kernel32.GetLastError() != 183:
+                break
+            ctypes.windll.kernel32.CloseHandle(_mutex)
+
     if ctypes.windll.kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
         ctypes.windll.kernel32.CloseHandle(_mutex)
         # 이미 실행중인 AutoExec 창을 찾아 활성화
