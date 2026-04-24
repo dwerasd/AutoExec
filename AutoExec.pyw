@@ -1067,7 +1067,7 @@ class RoutineEditDialog(tk.Toplevel):
         self.cmb_repeat = ttk.Combobox(frame, values=["1회", "매일"],
                                         width=8, state="readonly")
         self.cmb_repeat.grid(row=1, column=1, sticky=tk.W, pady=3, padx=(5, 0))
-        self.cmb_repeat.set("1회")
+        self.cmb_repeat.set("매일")
 
         ttk.Label(frame, text="시작일:").grid(row=2, column=0, sticky=tk.W, pady=3)
         self.ent_start_date = ttk.Entry(frame, width=12)
