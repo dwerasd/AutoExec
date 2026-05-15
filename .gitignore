@@ -1,0 +1,53 @@
+.vs
+.vscode
+AutoExec.code-workspace
+package-lock.json
+
+*.log
+*.txt
+*.aps
+*.bat
+*.vcxproj.user
+*.suo
+*.sdf
+*.opensdf
+*.bak
+*.bak_*
+*.db
+*.png
+nul
+
+# Visual Studio 빌드 파일
+*.obj
+*.pch
+*.res
+*.tlog
+*.lastbuildstate
+*.idb
+*.pdb
+*.exe
+*.dll
+*.lib
+*.exp
+*.ilk
+*.cache
+
+# 디렉토리
+Release/
+Win32/
+x86/
+temp/
+obj/
+.github/
+.specstory/
+.temp/
+__pycache__/
+Debug/
+data/
+
+# 환경 변수
+.env
+
+# .claude 폴더는 무시하되 프로젝트 지침은 추적
+.claude/*
+!.claude/CLAUDE.md

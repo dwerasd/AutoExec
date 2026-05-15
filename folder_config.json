@@ -1,0 +1,123 @@
+{
+    "backup_paths": [
+        {
+            "path": "C:\\Users\\Administrator\\AppData\\LocalLow\\NPKI",
+            "destination": "NPKI"
+        },
+        {
+            "path": "C:\\Users\\Administrator\\AppData\\Roaming\\qBittorrent",
+            "destination": "qBittorrent_Roaming"
+        },
+        {
+            "path": "C:\\Users\\Administrator\\AppData\\Local\\qBittorrent",
+            "destination": "qBittorrent_Local"
+        },
+        {
+            "path": "C:\\Users\\Administrator\\Documents\\카카오톡 받은 파일",
+            "destination": "카카오톡 받은 파일"
+        },
+        {
+            "path": "C:\\Users\\Administrator\\Pictures\\Screenshots",
+            "destination": "스크린샷"
+        },
+        {
+            "path": "C:\\Users\\Administrator\\Downloads",
+            "destination": "다운로드"
+        },
+        {
+            "path": "C:\\Users\\Administrator\\AppData\\Roaming\\Microsoft\\Internet Explorer\\Quick Launch\\User Pinned\\TaskBar",
+            "destination": "작업표시줄"
+        },
+        {
+            "path": "C:\\Users\\Administrator\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup",
+            "destination": "시작메뉴"
+        },
+        {
+            "path": "C:\\Users\\Administrator\\AppData\\Local\\Packages\\Microsoft.WindowsNotepad_8wekyb3d8bbwe\\LocalState\\TabState",
+            "destination": "메모장"
+        },
+        {
+            "path": "C:\\Users\\Administrator\\.gitconfig",
+            "destination": ".gitconfig"
+        },
+        {
+            "path": "C:\\Users\\Administrator\\.git-credentials",
+            "destination": ".git-credentials"
+        },
+        {
+            "path": "C:\\Users\\Administrator\\AppData\\Roaming\\HeidiSQL",
+            "destination": "HeidiSQL"
+        },
+        {
+            "path": "C:\\Users\\Administrator\\AppData\\Roaming\\Code\\User",
+            "destination": "VSCode_User"
+        },
+        {
+            "path": "C:\\Users\\Administrator\\.vscode\\extensions",
+            "destination": "VSCode_extensions"
+        },
+        {
+            "path": "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Enterprise\\Common7\\IDE\\VC\\VCProjectItems\\hfile.h",
+            "destination": "VS2019_VCProjectItems.h"
+        },
+        {
+            "path": "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Enterprise\\Common7\\IDE\\VC\\VCProjectItems\\newc++file.cpp",
+            "destination": "VS2019_VCProjectItems.cpp"
+        },
+        {
+            "path": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\Common7\\IDE\\VC\\VCProjectItems\\hfile.h",
+            "destination": "VS2026_VCProjectItems.h"
+        },
+        {
+            "path": "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\Common7\\IDE\\VC\\VCProjectItems\\newc++file.cpp",
+            "destination": "VS2026_VCProjectItems.cpp"
+        },
+        {
+            "path": "C:\\Users\\Administrator\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles",
+            "destination": "Firefox_Profiles",
+            "exclude": [
+                "cache2",
+                "shader-cache",
+                "datareporting",
+                "startupCache",
+                "jumpListCache",
+                "parent.lock",
+                "lock",
+                ".parentlock"
+            ]
+        },
+        {
+            "path": "C:\\Users\\Administrator\\AppData\\Local\\Google\\Chrome\\User Data\\Default",
+            "destination": "Chrome_Default",
+            "exclude": [
+                "Cache",
+                "Code Cache",
+                "Service Worker",
+                "GPUCache",
+                "File System",
+                "GCM Store",
+                "DawnGraphiteCache",
+                "DawnWebGPUCache",
+                "Network",
+                "Sessions",
+                "Safe Browsing Network"
+            ]
+        },
+        {
+            "path": "C:\\Users\\Administrator\\AppData\\Roaming\\PotPlayer64",
+            "destination": "팟플레이어64"
+        },
+        {
+            "path": "C:\\Program Files\\MariaDB 10.6\\data",
+            "destination": "MariaDB_data",
+            "service": "MariaDB",
+            "exclude": [
+                "mysql",
+                "performance_schema",
+                "sys"
+            ]
+        }
+    ],
+    "description": "백업할 폴더 경로 목록입니다. 경로를 추가하거나 제거하세요. dict 형태로 path(원본 경로), destination(백업 폴더명), service(백업 전 중지할 서비스), exclude(제외할 폴더)를 지정할 수 있습니다.",
+    "last_backup_destination": "E:\\backup\\20251206"
+}
