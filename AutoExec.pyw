@@ -2930,7 +2930,7 @@ class AutoExecApp:
     def log(self, msg):
         """로그 메시지 추가 (스레드 안전)"""
         def _append():
-            now_str = datetime.now().strftime("%H:%M:%S")
+            now_str = datetime.now().strftime("%m-%d %H:%M:%S")
             self.log_text.config(state=tk.NORMAL)
             self.log_text.insert(tk.END, f"[{now_str}] {msg}\n")
             self.log_text.see(tk.END)
