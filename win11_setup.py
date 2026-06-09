@@ -271,8 +271,10 @@ def set_process_creation_audit(enable: bool, log: Callable[[str], None]) -> bool
     log(f"[프로세스감사] {label} 시작")
 
     # ① 감사 정책 (auditpol — 레지스트리로 불가, 반드시 auditpol 사용)
+    # 주의: GUID에 따옴표를 붙이면 cmd /c 전달 시 따옴표가 깨져 인자 인식 실패.
+    #       GUID는 공백이 없으므로 따옴표 없이 전달한다.
     ok_pol, out = run_cmd(
-        f'auditpol /set /subcategory:"{AUDIT_PROCESS_CREATION_GUID}" '
+        f"auditpol /set /subcategory:{AUDIT_PROCESS_CREATION_GUID} "
         f"/success:{state} /failure:{state}"
     )
     if ok_pol:
