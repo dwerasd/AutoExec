@@ -2880,6 +2880,14 @@ class AutoExecApp:
         menu_backup.add_separator()
         menu_backup.add_command(label="폴더 백업...", command=self._menu_backup)
         menu_backup.add_command(label="폴더 복구...", command=self._menu_restore)
+        menu_backup.add_separator()
+        # 프로세스 생성 감사(4688) 켜기/끄기 서브메뉴
+        menu_audit = tk.Menu(menu_backup, tearoff=0)
+        menu_audit.add_command(label="켜기 (4688 + 명령줄)",
+                               command=lambda: self._menu_process_audit(True))
+        menu_audit.add_command(label="끄기",
+                               command=lambda: self._menu_process_audit(False))
+        menu_backup.add_cascade(label="프로세스 생성 감사", menu=menu_audit)
         menubar.add_cascade(label="관리", menu=menu_backup)
 
         self.root.config(menu=menubar)
@@ -2891,6 +2899,12 @@ class AutoExecApp:
 
     def _menu_registry(self):
         RegistryDialog(self.root, self.log)
+
+    def _menu_process_audit(self, enable: bool):
+        """프로세스 생성 감사(4688) 켜기/끄기 (관리자 권한 필요, 상태 확인 없이 적용)."""
+        def _worker():
+            win11_setup.set_process_creation_audit(enable, self.log)
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _menu_backup_paths(self):
         BackupPathsDialog(self.root)

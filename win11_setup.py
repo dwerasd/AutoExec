@@ -240,6 +240,61 @@ def run_cmd(command: str) -> tuple[bool, str]:
         return False, str(e)
 
 
+# ===== 프로세스 생성 감사 (이벤트 4688) =====
+
+# 감사 하위 범주 GUID (언어 무관 — 영문/한글 Windows 공통)
+AUDIT_PROCESS_CREATION_GUID = "{0CCE922B-69AE-11D9-BED3-505054503030}"
+
+# 4688 이벤트에 전체 명령줄 포함 여부 (순수 레지스트리 DWORD)
+AUDIT_CMDLINE_PATH = r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\Audit"
+AUDIT_CMDLINE_NAME = "ProcessCreationIncludeCmdLine_Enabled"
+
+
+def set_process_creation_audit(enable: bool, log: Callable[[str], None]) -> bool:
+    """프로세스 생성 감사(이벤트 4688)를 켜거나 끈다.
+
+    두 부분으로 구성되며 한 동작에 함께 적용한다:
+      1. 감사 정책 ON/OFF: ``auditpol.exe`` (LSA 감사 API). 최신 Windows는
+         하위 범주 설정 강제가 기본값이라 레지스트리로 직접 제어 불가.
+      2. 명령줄 포함 ON/OFF: ``ProcessCreationIncludeCmdLine_Enabled`` DWORD (레지스트리).
+    둘 다 관리자 권한이 필요하다. 상태 확인 없이 지정 상태로 강제 적용한다.
+
+    Args:
+        enable: True면 켜기(success/failure 감사 + 명령줄 기록), False면 끄기.
+        log: 로그 콜백 함수.
+
+    Returns:
+        정책·레지스트리 둘 다 성공하면 True.
+    """
+    state = "enable" if enable else "disable"  # auditpol 인자 값
+    label = "켜기" if enable else "끄기"  # 로그 표시용 라벨
+    log(f"[프로세스감사] {label} 시작")
+
+    # ① 감사 정책 (auditpol — 레지스트리로 불가, 반드시 auditpol 사용)
+    ok_pol, out = run_cmd(
+        f'auditpol /set /subcategory:"{AUDIT_PROCESS_CREATION_GUID}" '
+        f"/success:{state} /failure:{state}"
+    )
+    if ok_pol:
+        log(f"[프로세스감사] 감사 정책 {label} 완료")
+    else:
+        log(f"[프로세스감사] 감사 정책 실패(관리자 권한 확인): {out[:100]}")
+
+    # ② 명령줄 포함 (레지스트리 DWORD: 1=기록, 0=미기록)
+    cmdline_val = 1 if enable else 0  # 명령줄 포함 플래그
+    ok_reg, err = write_registry_value(
+        AUDIT_CMDLINE_PATH, AUDIT_CMDLINE_NAME, cmdline_val, winreg.REG_DWORD
+    )
+    if ok_reg:
+        log(f"[프로세스감사] 명령줄 포함 {label} 완료")
+    else:
+        log(f"[프로세스감사] 명령줄 포함 실패: {err}")
+
+    success = ok_pol and ok_reg  # 전체 성공 여부
+    log(f"[프로세스감사] {label} {'성공' if success else '일부 실패'}")
+    return success
+
+
 def load_command_items() -> list[dict]:
     if not COMMANDS_CONFIG.exists():
         return []
