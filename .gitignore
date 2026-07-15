@@ -14,7 +14,6 @@ package-lock.json
 *.bak
 *.bak_*
 *.db
-*.png
 nul
 
 # Visual Studio 빌드 파일
