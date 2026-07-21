@@ -3,6 +3,13 @@
 """
 AutoExec.pyw - PC 관리 / WOL 부팅 / 자동실행 스케줄러
 Python 3.14, tkinter + SQLite3 + JSON(로컬 UI 설정)
+
+[새 PC 세팅] 의존성 설치 (가상환경이면 활성화 후):
+    pip install -r requirements.txt
+    (개별 설치: pip install python-dotenv pystray Pillow)
+
+주의: pythonw 실행은 오류를 표시하지 않는다.
+실행이 안 되면 콘솔에서 `python AutoExec.pyw`로 원인 확인.
 """
 
 import os
@@ -20,7 +27,19 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from datetime import datetime, date, timedelta
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv  # pip install python-dotenv
+except ImportError:
+    # pythonw 실행 시 콘솔이 없어 ImportError가 보이지 않음 → 팝업으로 안내
+    _root = tk.Tk()
+    _root.withdraw()
+    messagebox.showerror(
+        "AutoExec - 의존성 미설치",
+        "python-dotenv 패키지가 설치되어 있지 않습니다.\n\n"
+        "콘솔에서 아래 명령으로 설치 후 다시 실행하세요:\n"
+        "pip install -r requirements.txt",
+    )
+    sys.exit(1)
 import win11_setup
 import win11_folder
 
@@ -2819,9 +2838,49 @@ class AutoExecApp:
         root.rowconfigure(5, weight=1)
 
     # ─── 윈도우 좌표 ─────────────────────────────────────
+    @staticmethod
+    def _clamp_to_visible(x, y, width, height):
+        """저장된 창 좌표가 모든 모니터 밖이면 가장 가까운 모니터 작업영역 안으로 보정.
+
+        다른 시스템에서 저장된 AutoExec.json 좌표(모니터 구성 상이)로 실행 시
+        창이 화면 밖에 떠서 보이지 않는 문제 회피. 어느 모니터와든 겹치면 원본 유지.
+        """
+        MONITOR_DEFAULTTONULL = 0
+        MONITOR_DEFAULTTONEAREST = 2
+
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", ctypes.wintypes.DWORD),
+                ("rcMonitor", ctypes.wintypes.RECT),
+                ("rcWork", ctypes.wintypes.RECT),
+                ("dwFlags", ctypes.wintypes.DWORD),
+            ]
+
+        try:
+            user32 = ctypes.windll.user32
+            rect = ctypes.wintypes.RECT(x, y, x + width, y + height)
+            if user32.MonitorFromRect(ctypes.byref(rect), MONITOR_DEFAULTTONULL):
+                return x, y  # 어느 모니터와든 겹침 → 그대로 사용
+
+            # 완전히 화면 밖 → 가장 가까운 모니터의 작업영역 안으로 클램프
+            hmon = user32.MonitorFromRect(ctypes.byref(rect), MONITOR_DEFAULTTONEAREST)
+            info = MONITORINFO()
+            info.cbSize = ctypes.sizeof(MONITORINFO)
+            if not hmon or not user32.GetMonitorInfoW(hmon, ctypes.byref(info)):
+                return 100, 100  # 모니터 정보 조회 실패 시 안전 기본값
+            work = info.rcWork
+            new_x = max(work.left, min(x, work.right - width))
+            new_y = max(work.top, min(y, work.bottom - height))
+            return new_x, new_y
+        except OSError:
+            return 100, 100
+
     def _restore_window(self):
         w = self.settings["window"]
-        self.root.geometry(f"{w['width']}x{w['height']}+{w['x']}+{w['y']}")
+        x, y = self._clamp_to_visible(w["x"], w["y"], w["width"], w["height"])
+        self.root.geometry(f"{w['width']}x{w['height']}+{x}+{y}")
+        if (x, y) != (w["x"], w["y"]):
+            self.log(f"[창] 화면 밖 좌표 보정: ({w['x']},{w['y']}) → ({x},{y})")
 
     def _save_window(self):
         try:
@@ -4521,8 +4580,8 @@ class AutoExecApp:
     def _setup_tray(self):
         """pystray 트레이 아이콘 설정 (백그라운드 스레드)"""
         try:
-            import pystray
-            from PIL import Image, ImageDraw
+            import pystray  # pip install pystray
+            from PIL import Image, ImageDraw  # pip install Pillow
 
             img = Image.new("RGB", (64, 64), (30, 100, 200))
             draw = ImageDraw.Draw(img)

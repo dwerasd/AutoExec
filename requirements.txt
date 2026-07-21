@@ -1,0 +1,4 @@
+# AutoExec 의존성 — 설치: pip install -r requirements.txt
+python-dotenv   # .env 로드 (필수 — 미설치 시 실행 불가)
+pystray         # 트레이 아이콘 (선택 — 미설치 시 트레이 기능만 비활성)
+Pillow          # 트레이 아이콘 이미지 생성 (pystray와 함께 필요)
