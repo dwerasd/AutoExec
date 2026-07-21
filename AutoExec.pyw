@@ -2759,10 +2759,11 @@ class AutoExecApp:
         self.profile_tree.bind("<Delete>", self._delete_profile)
 
         move_btn_frame = ttk.Frame(lf_move)
-        move_btn_frame.grid(row=1, column=0, sticky=tk.W, pady=(3, 0))
+        move_btn_frame.grid(row=1, column=0, sticky=tk.EW, pady=(3, 0))
         ttk.Button(move_btn_frame, text="추가", width=6, command=self._add_profile).pack(side=tk.LEFT, padx=(0, 3))
         ttk.Button(move_btn_frame, text="\u25b2", width=3, command=lambda: self._reorder_profile(-1)).pack(side=tk.LEFT, padx=(0, 1))
         ttk.Button(move_btn_frame, text="\u25bc", width=3, command=lambda: self._reorder_profile(1)).pack(side=tk.LEFT)
+        ttk.Button(move_btn_frame, text="일괄배치", command=self._apply_all_profiles).pack(side=tk.RIGHT)
 
         # ── PC 관리 (우측, 고정 폭) ──
         lf_pc = ttk.LabelFrame(mid_frame, text="PC 관리", padding=5)
@@ -3807,6 +3808,7 @@ class AutoExecApp:
         if item not in self.profile_tree.selection():
             self.profile_tree.selection_set(item)
         menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="이동", command=self._manual_move_profile)
         menu.add_command(label="편집", command=self._edit_profile)
         menu.add_command(label="삭제", command=self._delete_profile)
         menu.tk_popup(event.x_root, event.y_root)
@@ -3844,6 +3846,29 @@ class AutoExecApp:
         def _do_move():
             moved = self._apply_profile_rules(profile, rules)
             self.log(f"[프로파일] {profile['name']} {moved}개 창 이동 완료")
+
+        threading.Thread(target=_do_move, daemon=True).start()
+
+    def _apply_all_profiles(self):
+        """일괄배치: 사용(enabled) 프로파일 전체를 리스트 순서대로 즉시 적용"""
+        profiles = db_fetch_profiles()
+        targets = [p for p in profiles if p.get("enabled", 1)]
+        if not targets:
+            self.log("[프로파일] 일괄배치: 사용 중인 프로파일 없음")
+            return
+
+        def _do_move():
+            try:
+                monitors = self._get_monitors_info()
+                total = 0
+                for profile in targets:
+                    rules = db_fetch_rules(profile["id"])
+                    if not rules:
+                        continue
+                    total += self._apply_profile_rules(profile, rules, monitors_info=monitors)
+                self.log(f"[프로파일] 일괄배치: {len(targets)}개 프로파일, {total}개 창 이동 완료")
+            except Exception as e:
+                self.log(f"[프로파일] 일괄배치 실패: {e}")
 
         threading.Thread(target=_do_move, daemon=True).start()
 
