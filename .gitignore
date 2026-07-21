@@ -4,7 +4,6 @@ AutoExec.code-workspace
 package-lock.json
 
 *.log
-*.txt
 *.aps
 *.bat
 *.vcxproj.user
