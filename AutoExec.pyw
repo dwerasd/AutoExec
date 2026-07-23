@@ -113,6 +113,7 @@ def db_init():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL DEFAULT '',
             enabled INTEGER NOT NULL DEFAULT 1,
+            allow_duplicate INTEGER NOT NULL DEFAULT 0,
             run_time TEXT NOT NULL DEFAULT '00:00',
             executable TEXT NOT NULL DEFAULT '',
             arguments TEXT NOT NULL DEFAULT '',
@@ -133,6 +134,11 @@ def db_init():
     # tasks 테이블에 auto_move 필드 추가
     try:
         cur.execute("ALTER TABLE tasks ADD COLUMN auto_move INTEGER NOT NULL DEFAULT 0")
+    except Exception:
+        pass
+    # tasks 테이블에 중복실행 허용 필드 추가
+    try:
+        cur.execute("ALTER TABLE tasks ADD COLUMN allow_duplicate INTEGER NOT NULL DEFAULT 0")
     except Exception:
         pass
     # tasks 테이블에 위치 필드 추가 (폴더 창 위치 지정용)
@@ -598,27 +604,28 @@ def db_fetch_tasks():
 
 def db_upsert_task(task_id, name, enabled, run_time, executable, arguments, python_venv, skip_holiday,
                    repeat_mode="once", repeat_interval=0, repeat_end_time="23:59",
-                   target_x=0, target_y=0, target_w=0, target_h=0, auto_move=0):
+                   target_x=0, target_y=0, target_w=0, target_h=0, auto_move=0,
+                   allow_duplicate=0):
     """자동실행 추가 또는 수정"""
     conn = get_db_connection()
     try:
         cur = conn.cursor()
         if task_id:
             cur.execute(
-                "UPDATE tasks SET name=?, enabled=?, run_time=?, executable=?, "
+                "UPDATE tasks SET name=?, enabled=?, allow_duplicate=?, run_time=?, executable=?, "
                 "arguments=?, python_venv=?, skip_holiday=?, "
                 "repeat_mode=?, repeat_interval=?, repeat_end_time=?, "
                 "target_x=?, target_y=?, target_w=?, target_h=?, auto_move=? WHERE id=?",
-                (name, int(enabled), run_time, executable, arguments, python_venv, int(skip_holiday),
+                (name, int(enabled), int(allow_duplicate), run_time, executable, arguments, python_venv, int(skip_holiday),
                  repeat_mode, repeat_interval, repeat_end_time,
                  target_x, target_y, target_w, target_h, int(auto_move), task_id),
             )
         else:
             cur.execute(
-                "INSERT INTO tasks (name, enabled, run_time, executable, arguments, python_venv, skip_holiday, "
+                "INSERT INTO tasks (name, enabled, allow_duplicate, run_time, executable, arguments, python_venv, skip_holiday, "
                 "repeat_mode, repeat_interval, repeat_end_time, target_x, target_y, target_w, target_h, auto_move, sort_order) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, (SELECT IFNULL(MAX(sort_order),0)+1 FROM tasks))",
-                (name, int(enabled), run_time, executable, arguments, python_venv, int(skip_holiday),
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, (SELECT IFNULL(MAX(sort_order),0)+1 FROM tasks))",
+                (name, int(enabled), int(allow_duplicate), run_time, executable, arguments, python_venv, int(skip_holiday),
                  repeat_mode, repeat_interval, repeat_end_time,
                  target_x, target_y, target_w, target_h, int(auto_move)),
             )
@@ -1474,7 +1481,11 @@ class TaskEditDialog(tk.Toplevel):
         # 사용 여부
         self.var_enabled = tk.BooleanVar(value=True)
         ttk.Checkbutton(frame, text="사용", variable=self.var_enabled).grid(
-            row=1, column=0, columnspan=3, sticky=tk.W, pady=3
+            row=1, column=0, sticky=tk.W, pady=3
+        )
+        self.var_allow_duplicate = tk.BooleanVar(value=False)
+        ttk.Checkbutton(frame, text="중복실행 가능", variable=self.var_allow_duplicate).grid(
+            row=1, column=1, columnspan=2, sticky=tk.W, padx=(5, 0), pady=3
         )
 
         # 실행 모드
@@ -1604,6 +1615,7 @@ class TaskEditDialog(tk.Toplevel):
         if task:
             self.ent_name.insert(0, task["name"])
             self.var_enabled.set(bool(task["enabled"]))
+            self.var_allow_duplicate.set(bool(task.get("allow_duplicate", 0)))
             self.ent_time.delete(0, tk.END)
             self.ent_time.insert(0, _to_hm(task["run_time"]))
             self.ent_exe.insert(0, task["executable"])
@@ -1833,6 +1845,7 @@ class TaskEditDialog(tk.Toplevel):
             "id": self.task["id"] if self.task else None,
             "name": name,
             "enabled": self.var_enabled.get(),
+            "allow_duplicate": self.var_allow_duplicate.get(),
             "run_time": self.ent_time.get().strip(),
             "executable": executable,
             "arguments": self.ent_args.get().strip(),
@@ -3528,7 +3541,7 @@ class AutoExecApp:
             db_upsert_task(None, r["name"], r["enabled"], r["run_time"], r["executable"], r["arguments"],
                            r["python_venv"], r["skip_holiday"], r["repeat_mode"], r["repeat_interval"], r["repeat_end_time"],
                            r.get("target_x", 0), r.get("target_y", 0), r.get("target_w", 0), r.get("target_h", 0),
-                           r.get("auto_move", 0))
+                           r.get("auto_move", 0), r.get("allow_duplicate", 0))
             self._refresh_task_list()
             self.log(f"자동실행 추가: {r['name']}")
 
@@ -3615,7 +3628,7 @@ class AutoExecApp:
         if item not in self.task_tree.selection():
             self.task_tree.selection_set(item)
         menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label="실행", command=self._run_task)
+        menu.add_command(label="실행", command=lambda: self._run_task(from_context_menu=True))
         menu.add_command(label="폴더 열기", command=self._open_task_folder)
         menu.add_command(label="편집", command=self._edit_task)
         menu.add_command(label="삭제", command=self._delete_task)
@@ -3635,7 +3648,7 @@ class AutoExecApp:
             db_upsert_task(r["id"], r["name"], r["enabled"], r["run_time"], r["executable"], r["arguments"],
                            r["python_venv"], r["skip_holiday"], r["repeat_mode"], r["repeat_interval"], r["repeat_end_time"],
                            r.get("target_x", 0), r.get("target_y", 0), r.get("target_w", 0), r.get("target_h", 0),
-                           r.get("auto_move", 0))
+                           r.get("auto_move", 0), r.get("allow_duplicate", 0))
             self._refresh_task_list()
             self.log(f"자동실행 수정: {r['name']}")
 
@@ -4217,7 +4230,7 @@ class AutoExecApp:
         else:
             self.git_url_entry.focus_set()
 
-    def _run_task(self, skip_activation=False):
+    def _run_task(self, skip_activation=False, from_context_menu=False):
         """선택한 자동실행 작업을 즉시 테스트 실행 (폴더면 열기, 실행중이면 활성화)"""
         task = self._get_selected_task()
         if not task:
@@ -4225,7 +4238,8 @@ class AutoExecApp:
         if os.path.isdir(task["executable"]):
             self._open_folder_task(task)
             return
-        if not skip_activation:
+        allow_duplicate = from_context_menu and bool(task.get("allow_duplicate", 0))
+        if not skip_activation and not allow_duplicate:
             # 이미 실행중인 창이 있으면 활성화
             task_id = task["id"]
             if task_id in self._running_tasks:
@@ -4243,7 +4257,7 @@ class AutoExecApp:
             run_stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         # 수동 실행 시에도 last_run 메모리 갱신 → 자동 스케줄러 중복 실행 방지
         task["last_run"] = run_stamp
-        self._execute_task(task, run_stamp)
+        self._execute_task(task, run_stamp, allow_duplicate=allow_duplicate)
 
     def _stop_task(self):
         """선택한 자동실행 작업의 실행중인 프로세스를 강제 종료"""
@@ -4477,7 +4491,7 @@ class AutoExecApp:
                 task["last_run"] = now_dt_str
                 self._execute_task(task, now_dt_str)
 
-    def _execute_task(self, task, today_str):
+    def _execute_task(self, task, today_str, allow_duplicate=False):
         """자동실행 작업 실행 (별도 프로세스, 폴더는 탐색기로 열기)"""
         task_id = task["id"]
         executable = task["executable"]
@@ -4489,11 +4503,13 @@ class AutoExecApp:
             return
 
         # 중복 실행 방지: 이미 실행중인 작업이면 무시
-        if task_id in self._running_tasks:
+        if task_id in self._running_tasks and not allow_duplicate:
             self.log(f"[자동실행] {task['name']} 이미 실행중 - 건너뜀")
             return
 
-        self._running_tasks.add(task_id)
+        track_as_primary = task_id not in self._running_tasks
+        if track_as_primary:
+            self._running_tasks.add(task_id)
 
         arguments = task.get("arguments", "")
         python_venv = task["python_venv"]
@@ -4524,7 +4540,8 @@ class AutoExecApp:
                     cwd=os.path.dirname(executable) or None,
                     creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
                 )
-                self._task_processes[task_id] = proc
+                if track_as_primary:
+                    self._task_processes[task_id] = proc
                 db_update_task_last_run(task["id"], today_str)
                 # auto_move가 켜져 있으면 창이 생길 때까지 대기 후 위치 이동
                 if task.get("auto_move", 0):
@@ -4548,8 +4565,9 @@ class AutoExecApp:
             except Exception as e:
                 self.log(f"[자동실행] {task['name']} 실행 실패: {e}")
             finally:
-                self._task_processes.pop(task_id, None)
-                self._running_tasks.discard(task_id)
+                if track_as_primary:
+                    self._task_processes.pop(task_id, None)
+                    self._running_tasks.discard(task_id)
 
         threading.Thread(target=_run, daemon=True).start()
 
