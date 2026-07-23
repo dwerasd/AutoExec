@@ -16,6 +16,9 @@ package-lock.json
 *.db
 nul
 
+# 로컬 UI 상태 (창 위치·크기 — 머신마다 다름)
+AutoExec.json
+
 # Visual Studio 빌드 파일
 *.obj
 *.pch
