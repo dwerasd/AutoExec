@@ -9,13 +9,18 @@
 import json
 import socket
 import subprocess
+import sys
 import winreg
 from pathlib import Path
 from typing import Any, Callable
 
 
 # 설정 파일 경로
-SCRIPT_DIR = Path(__file__).parent
+SCRIPT_DIR = (
+    Path(sys.executable).resolve().parent
+    if getattr(sys, "frozen", False)
+    else Path(__file__).resolve().parent
+)
 REGISTRY_CONFIG = SCRIPT_DIR / "registry_config.json"
 COMMANDS_CONFIG = SCRIPT_DIR / "commands_config.json"
 
