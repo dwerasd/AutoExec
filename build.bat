@@ -40,7 +40,6 @@ if errorlevel 1 goto :error
 
 echo [5/5] Copying runtime files...
 for %%F in (
-    AutoExec.json
     commands_config.json
     folder_config.json
     registry_config.json
@@ -50,8 +49,14 @@ for %%F in (
     if exist "%~dp0%%F" copy /Y "%~dp0%%F" "%~dp0dist\%%F" >nul
 )
 
-if exist "%~dp0AutoExec.db" if not exist "%~dp0dist\AutoExec.db" (
-    copy /Y "%~dp0AutoExec.db" "%~dp0dist\AutoExec.db" >nul
+rem AutoExec.json/AutoExec.db 는 exe 런타임 상태 파일 — 최초 1회만 시드 (덮어쓰면 창 위치 등 롤백)
+for %%F in (
+    AutoExec.json
+    AutoExec.db
+) do (
+    if exist "%~dp0%%F" if not exist "%~dp0dist\%%F" (
+        copy /Y "%~dp0%%F" "%~dp0dist\%%F" >nul
+    )
 )
 
 echo.
