@@ -934,7 +934,8 @@ def _find_window_by_exe_name(exe_name_lower):
 
 
 def _enumerate_process_windows(exe_name_lower):
-    """프로세스명(소문자)의 모든 visible 창 정보 반환: [{"hwnd", "class_name", "title", "x", "y", "w", "h"}, ...]"""
+    """프로세스명(소문자)의 모든 visible 창 정보 반환: [{"hwnd", "class_name", "title", "x", "y", "w", "h"}, ...]
+    exe_name_lower가 빈 문자열이면 프로세스 필터 없이 전체 visible 창 반환 (제목 전용 프로파일용)"""
     windows = []
     user32 = ctypes.windll.user32
     kernel32 = ctypes.windll.kernel32
@@ -945,31 +946,35 @@ def _enumerate_process_windows(exe_name_lower):
             return True
         if user32.GetWindowTextLengthW(hwnd) == 0:
             return True
-        pid = ctypes.wintypes.DWORD()
-        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        handle = kernel32.OpenProcess(0x1000, False, pid.value)
-        if handle:
+        if exe_name_lower:
+            pid = ctypes.wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            handle = kernel32.OpenProcess(0x1000, False, pid.value)
+            if not handle:
+                return True
             try:
                 buf = ctypes.create_unicode_buffer(260)
                 size = ctypes.wintypes.DWORD(260)
-                if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
-                    if os.path.basename(buf.value).lower() == exe_name_lower:
-                        cls_buf = ctypes.create_unicode_buffer(256)
-                        GetClassNameW(hwnd, cls_buf, 256)
-                        length = user32.GetWindowTextLengthW(hwnd)
-                        title_buf = ctypes.create_unicode_buffer(length + 1)
-                        user32.GetWindowTextW(hwnd, title_buf, length + 1)
-                        rect = ctypes.wintypes.RECT()
-                        user32.GetWindowRect(hwnd, ctypes.byref(rect))
-                        windows.append({
-                            "hwnd": hwnd,
-                            "class_name": cls_buf.value,
-                            "title": title_buf.value,
-                            "x": rect.left, "y": rect.top,
-                            "w": rect.right - rect.left, "h": rect.bottom - rect.top,
-                        })
+                if not kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                    return True
+                if os.path.basename(buf.value).lower() != exe_name_lower:
+                    return True
             finally:
                 kernel32.CloseHandle(handle)
+        cls_buf = ctypes.create_unicode_buffer(256)
+        GetClassNameW(hwnd, cls_buf, 256)
+        length = user32.GetWindowTextLengthW(hwnd)
+        title_buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, title_buf, length + 1)
+        rect = ctypes.wintypes.RECT()
+        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+        windows.append({
+            "hwnd": hwnd,
+            "class_name": cls_buf.value,
+            "title": title_buf.value,
+            "x": rect.left, "y": rect.top,
+            "w": rect.right - rect.left, "h": rect.bottom - rect.top,
+        })
         return True
 
     WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
@@ -1996,8 +2001,9 @@ class RuleEditDialog(tk.Toplevel):
         cls_filter = self.ent_class.get().strip()
         title_filter = self.ent_title.get().strip()
         exe_name = self._exe_name.lower()
-        if not exe_name:
-            messagebox.showwarning("입력 오류", "프로파일의 프로세스명이 없습니다.", parent=self)
+        if not exe_name and not cls_filter and not title_filter:
+            messagebox.showwarning("입력 오류",
+                                   "제목 전용 프로파일은 Class 또는 Title 패턴을\n입력한 뒤 캡처하세요.", parent=self)
             return
 
         found_hwnd = _find_single_window(exe_name, cls_filter, title_filter)
@@ -2079,9 +2085,11 @@ class ProfileEditDialog(tk.Toplevel):
         ttk.Label(frame, text="프로세스명:").grid(row=1, column=0, sticky=tk.W, pady=3)
         self.ent_exe = ttk.Entry(frame, width=30)
         self.ent_exe.grid(row=1, column=1, columnspan=3, sticky=tk.EW, pady=3, padx=(5, 0))
+        ttk.Label(frame, text="(비우면 제목 전용 — 전체 창에서 Class/Title 패턴으로 매칭)",
+                  foreground="gray").grid(row=2, column=1, columnspan=3, sticky=tk.W, padx=(5, 0))
 
         info_frame = ttk.Frame(frame)
-        info_frame.grid(row=2, column=0, columnspan=4, sticky=tk.W)
+        info_frame.grid(row=3, column=0, columnspan=4, sticky=tk.W)
         self.var_enabled = tk.BooleanVar(value=True)
         ttk.Checkbutton(info_frame, text="사용", variable=self.var_enabled).pack(side=tk.LEFT, padx=(0, 10))
         ttk.Label(info_frame, text="트리거:").pack(side=tk.LEFT)
@@ -2093,10 +2101,10 @@ class ProfileEditDialog(tk.Toplevel):
 
         # ── 중단: 창 규칙 목록 ──
         lf_rules = ttk.LabelFrame(frame, text="창 규칙", padding=5)
-        lf_rules.grid(row=3, column=0, columnspan=4, sticky=tk.NSEW, pady=(8, 0))
+        lf_rules.grid(row=4, column=0, columnspan=4, sticky=tk.NSEW, pady=(8, 0))
         lf_rules.columnconfigure(0, weight=1)
         lf_rules.rowconfigure(0, weight=1)
-        frame.rowconfigure(3, weight=1)
+        frame.rowconfigure(4, weight=1)
 
         rule_cols = ("Class", "Title 패턴", "이동 위치", "최대화")
         self.rule_tree = ttk.Treeview(lf_rules, columns=rule_cols, show="headings", height=8)
@@ -2124,7 +2132,7 @@ class ProfileEditDialog(tk.Toplevel):
 
         # ── 하단: 확인/취소 ──
         btn_frame = ttk.Frame(frame)
-        btn_frame.grid(row=4, column=0, columnspan=4, pady=(10, 0))
+        btn_frame.grid(row=5, column=0, columnspan=4, pady=(10, 0))
         ttk.Button(btn_frame, text="확인", command=self._on_ok).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="취소", command=self.destroy).pack(side=tk.LEFT, padx=5)
 
@@ -2235,16 +2243,18 @@ class ProfileEditDialog(tk.Toplevel):
         self.rule_tree.selection_set(str(new_idx))
 
     def _capture_all_windows(self):
-        """프로세스의 모든 visible 창 위치를 일괄 캡처하여 규칙 생성"""
+        """프로세스의 모든 visible 창 위치를 일괄 캡처하여 규칙 생성 (프로세스명 비면 전체 창)"""
         exe_name = self.ent_exe.get().strip().lower()
-        if not exe_name:
-            messagebox.showwarning("입력 오류", "프로세스명을 먼저 입력하세요.", parent=self)
-            return
 
         windows = _enumerate_process_windows(exe_name)
         if not windows:
-            messagebox.showinfo("알림", f"{exe_name} 실행중인 창을 찾을 수 없습니다.", parent=self)
+            messagebox.showinfo("알림", f"{exe_name or '전체'} 실행중인 창을 찾을 수 없습니다.", parent=self)
             return
+
+        if not exe_name:
+            if not messagebox.askyesno("확인", f"프로세스명이 비어 있어 전체 {len(windows)}개 창을 캡처합니다.\n"
+                                       "계속하시겠습니까?", parent=self):
+                return
 
         if self.rules_data:
             if not messagebox.askyesno("확인", f"{len(windows)}개 창이 발견되었습니다.\n"
@@ -2268,10 +2278,21 @@ class ProfileEditDialog(tk.Toplevel):
     def _on_ok(self):
         name = self.ent_name.get().strip()
         exe_name = self.ent_exe.get().strip()
-        if not name or not exe_name:
-            messagebox.showwarning("입력 오류", "이름과 프로세스명을 입력하세요.", parent=self)
+        if not name:
+            messagebox.showwarning("입력 오류", "이름을 입력하세요.", parent=self)
             return
         trigger = self._TRIGGER_LABELS.get(self.var_trigger.get(), "monitor_change")
+        if not exe_name:
+            # 제목 전용 프로파일: 프로세스 기반 트리거 불가 + 무조건 매칭 규칙(전 창 이동) 방지
+            if trigger != "monitor_change":
+                messagebox.showwarning("입력 오류",
+                                       "제목 전용 프로파일(프로세스명 비움)은\n'듀얼모니터 감지' 트리거만 지원합니다.", parent=self)
+                return
+            for r in self.rules_data:
+                if not r.get("window_class") and not r.get("title_pattern"):
+                    messagebox.showwarning("입력 오류",
+                                           "제목 전용 프로파일의 규칙에는\nClass 또는 Title 패턴이 필요합니다.", parent=self)
+                    return
         self.result = {
             "id": self.profile.get("id") if self.profile else None,
             "name": name,
@@ -3721,7 +3742,7 @@ class AutoExecApp:
             trigger = self._TRIGGER_DISPLAY.get(p.get("trigger_mode", "monitor_change"), "")
             rule_count = db_count_rules(p["id"])
             self.profile_tree.insert("", tk.END, iid=str(p["id"]),
-                                     values=(enabled_mark, p["name"], p["exe_name"], trigger, rule_count))
+                                     values=(enabled_mark, p["name"], p["exe_name"] or "(제목전용)", trigger, rule_count))
 
     def _get_selected_profile(self):
         sel = self.profile_tree.selection()
