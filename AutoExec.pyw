@@ -19,6 +19,7 @@ import socket
 import struct
 import sqlite3
 import subprocess
+import shutil
 import threading
 import time
 import ctypes
@@ -46,7 +47,7 @@ import win11_folder
 
 # ─── 경로 설정 ────────────────────────────────────────────
 # PyInstaller one-file builds unpack modules into a temporary directory.
-# Writable settings and the database must remain next to autoexec.exe.
+# Writable settings and the database must remain next to AutoExec.exe.
 if getattr(sys, "frozen", False):
     SCRIPT_DIR = os.path.dirname(os.path.abspath(sys.executable))
 else:
@@ -58,6 +59,20 @@ STARTUP_REGISTRY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 STARTUP_VALUE_NAME = "AutoExec"
 
 load_dotenv(ENV_PATH)
+
+
+def _find_python_exe(windowed):
+    """python.exe/pythonw.exe 경로 반환.
+
+    frozen(AutoExec.exe) 실행 시 sys.executable 은 exe 자신이라 그 폴더에
+    인터프리터가 없다 → PATH 에서 시스템 Python 을 탐색한다.
+    탐색 실패 시 기존 후보 경로를 그대로 반환해 호출부의 실패 로그 형식을 유지한다.
+    """
+    name = "pythonw.exe" if windowed else "python.exe"
+    candidate = os.path.join(os.path.dirname(sys.executable), name)
+    if os.path.isfile(candidate):
+        return candidate
+    return shutil.which(name) or candidate
 
 
 def _to_hm(val):
@@ -1760,9 +1775,9 @@ class TaskEditDialog(tk.Toplevel):
             return  # 이미 지정되어 있으면 건드리지 않음
         ext = os.path.splitext(exe_path)[1].lower()
         if ext == ".pyw":
-            python_path = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+            python_path = _find_python_exe(windowed=True)
         elif ext == ".py":
-            python_path = os.path.join(os.path.dirname(sys.executable), "python.exe")
+            python_path = _find_python_exe(windowed=False)
         else:
             return
         if os.path.isfile(python_path):
@@ -4520,11 +4535,9 @@ class AutoExecApp:
                 if ext in (".py", ".pyw") and python_venv:
                     cmd = [python_venv, executable]
                 elif ext == ".pyw":
-                    python_exe = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
-                    cmd = [python_exe, executable]
+                    cmd = [_find_python_exe(windowed=True), executable]
                 elif ext == ".py":
-                    python_exe = os.path.join(os.path.dirname(sys.executable), "python.exe")
-                    cmd = [python_exe, executable]
+                    cmd = [_find_python_exe(windowed=False), executable]
                 else:
                     cmd = [executable]
 
