@@ -44,7 +44,12 @@ import win11_setup
 import win11_folder
 
 # ─── 경로 설정 ────────────────────────────────────────────
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# PyInstaller one-file builds unpack modules into a temporary directory.
+# Writable settings and the database must remain next to autoexec.exe.
+if getattr(sys, "frozen", False):
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = os.path.join(SCRIPT_DIR, ".env")
 JSON_PATH = os.path.join(SCRIPT_DIR, "AutoExec.json")
 AUTOEXEC_DB = os.path.join(SCRIPT_DIR, "AutoExec.db")
@@ -4613,8 +4618,12 @@ class AutoExecApp:
         # 절대 경로 + --restart 플래그로 재실행 (레이스 컨디션 회피를 위해 새 프로세스가 대기하도록)
         script_path = os.path.abspath(sys.argv[0])
         DETACHED_PROCESS = 0x00000008
+        if getattr(sys, "frozen", False):
+            restart_command = [sys.executable] + sys.argv[1:] + ["--restart"]
+        else:
+            restart_command = [sys.executable, script_path] + sys.argv[1:] + ["--restart"]
         subprocess.Popen(
-            [sys.executable, script_path] + sys.argv[1:] + ["--restart"],
+            restart_command,
             cwd=SCRIPT_DIR,
             close_fds=True,
             creationflags=DETACHED_PROCESS,

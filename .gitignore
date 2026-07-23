@@ -6,6 +6,7 @@ package-lock.json
 *.log
 *.aps
 *.bat
+!build.bat
 *.vcxproj.user
 *.suo
 *.sdf
@@ -42,6 +43,8 @@ obj/
 __pycache__/
 Debug/
 data/
+build/
+dist/
 
 # 환경 변수
 .env

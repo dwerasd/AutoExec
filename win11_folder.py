@@ -10,13 +10,19 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
 
-CONFIG_FILE = Path(__file__).parent / "folder_config.json"
+SCRIPT_DIR = (
+    Path(sys.executable).resolve().parent
+    if getattr(sys, "frozen", False)
+    else Path(__file__).resolve().parent
+)
+CONFIG_FILE = SCRIPT_DIR / "folder_config.json"
 
 DEFAULT_EXCLUDE_FILES = [
     "desktop.ini",
