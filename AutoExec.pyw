@@ -23,6 +23,7 @@ import threading
 import time
 import ctypes
 import ctypes.wintypes
+import winreg
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from datetime import datetime, date, timedelta
@@ -53,6 +54,8 @@ else:
 ENV_PATH = os.path.join(SCRIPT_DIR, ".env")
 JSON_PATH = os.path.join(SCRIPT_DIR, "AutoExec.json")
 AUTOEXEC_DB = os.path.join(SCRIPT_DIR, "AutoExec.db")
+STARTUP_REGISTRY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
+STARTUP_VALUE_NAME = "AutoExec"
 
 load_dotenv(ENV_PATH)
 
@@ -2654,6 +2657,7 @@ class AutoExecApp:
         root.columnconfigure(0, weight=1)
 
         # ── 메뉴바 ──
+        self.var_startup = tk.BooleanVar(value=self._is_startup_enabled())
         self.var_topmost = tk.BooleanVar(value=self.settings["window"].get("topmost", False))
         self.var_git_open_folder = tk.BooleanVar(value=bool(self.settings.get("git_open_folder", False)))
         self._build_menubar()
@@ -2925,12 +2929,85 @@ class AutoExecApp:
     def _apply_topmost(self):
         self.root.attributes("-topmost", self.var_topmost.get())
 
+    # ─── 윈도우 시작 시 실행 ─────────────────────────────
+    @staticmethod
+    def _startup_command():
+        """현재 실행 형태에 맞는 Windows 시작 명령을 반환한다."""
+        if getattr(sys, "frozen", False):
+            return subprocess.list2cmdline([os.path.abspath(sys.executable)])
+
+        pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+        if not os.path.isfile(pythonw):
+            pythonw = sys.executable
+        script_path = os.path.join(SCRIPT_DIR, "AutoExec.pyw")
+        return subprocess.list2cmdline([pythonw, script_path])
+
+    @staticmethod
+    def _is_startup_enabled():
+        """현재 사용자 시작 프로그램 등록 여부를 반환한다."""
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                STARTUP_REGISTRY_PATH,
+                0,
+                winreg.KEY_QUERY_VALUE,
+            ) as key:
+                value, _ = winreg.QueryValueEx(key, STARTUP_VALUE_NAME)
+                return str(value).strip() == AutoExecApp._startup_command()
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return False
+
+    def _toggle_startup(self):
+        """Windows 시작 프로그램 등록 상태를 체크 메뉴와 동기화한다."""
+        enabled = self.var_startup.get()
+        try:
+            if enabled:
+                with winreg.CreateKeyEx(
+                    winreg.HKEY_CURRENT_USER,
+                    STARTUP_REGISTRY_PATH,
+                    0,
+                    winreg.KEY_SET_VALUE,
+                ) as key:
+                    winreg.SetValueEx(
+                        key,
+                        STARTUP_VALUE_NAME,
+                        0,
+                        winreg.REG_SZ,
+                        self._startup_command(),
+                    )
+            else:
+                try:
+                    with winreg.OpenKey(
+                        winreg.HKEY_CURRENT_USER,
+                        STARTUP_REGISTRY_PATH,
+                        0,
+                        winreg.KEY_SET_VALUE,
+                    ) as key:
+                        winreg.DeleteValue(key, STARTUP_VALUE_NAME)
+                except FileNotFoundError:
+                    pass
+        except OSError as e:
+            self.var_startup.set(not enabled)
+            messagebox.showerror(
+                "윈도우 시작 시 실행",
+                f"시작 프로그램 설정을 변경하지 못했습니다.\n\n{e}",
+                parent=self.root,
+            )
+
     # ─── 메뉴바 ─────────────────────────────────────────
     def _build_menubar(self):
         menubar = tk.Menu(self.root)
 
         # 설정 메뉴
         menu_settings = tk.Menu(menubar, tearoff=0)
+        menu_settings.add_checkbutton(
+            label="윈도우 시작시 실행",
+            variable=self.var_startup,
+            command=self._toggle_startup,
+        )
+        menu_settings.add_separator()
         menu_settings.add_checkbutton(label="최상위", variable=self.var_topmost, command=self._toggle_topmost)
         menu_settings.add_checkbutton(label="깃 다운시 폴더 열기", variable=self.var_git_open_folder,
                                       command=self._save_git_open_folder)
