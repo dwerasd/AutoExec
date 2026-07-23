@@ -7,11 +7,11 @@ set "PYTHON_EXE=%~dp0.venv\Scripts\python.exe"
 if not exist "%PYTHON_EXE%" set "PYTHON_EXE=python"
 set "AUTOEXEC_EXE=%~dp0dist\autoexec.exe"
 
-echo [1/6] Checking Python...
+echo [1/5] Checking Python...
 "%PYTHON_EXE%" --version
 if errorlevel 1 goto :error
 
-echo [2/6] Stopping running AutoExec...
+echo [2/5] Stopping running AutoExec...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "try { " ^
     "  $target = [IO.Path]::GetFullPath($env:AUTOEXEC_EXE); " ^
@@ -21,11 +21,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "} catch { Write-Error $_; exit 1 }"
 if errorlevel 1 goto :error
 
-echo [3/6] Installing build dependencies...
+echo [3/5] Installing build dependencies...
 "%PYTHON_EXE%" -m pip install -r requirements.txt PyInstaller
 if errorlevel 1 goto :error
 
-echo [4/6] Building autoexec.exe...
+echo [4/5] Building autoexec.exe...
 "%PYTHON_EXE%" -m PyInstaller ^
     --noconfirm ^
     --clean ^
@@ -38,7 +38,7 @@ echo [4/6] Building autoexec.exe...
     "%~dp0AutoExec.pyw"
 if errorlevel 1 goto :error
 
-echo [5/6] Copying runtime files...
+echo [5/5] Copying runtime files...
 for %%F in (
     AutoExec.json
     commands_config.json
@@ -54,12 +54,8 @@ if exist "%~dp0AutoExec.db" if not exist "%~dp0dist\AutoExec.db" (
     copy /Y "%~dp0AutoExec.db" "%~dp0dist\AutoExec.db" >nul
 )
 
-echo [6/6] Starting AutoExec...
-start "" "%AUTOEXEC_EXE%"
-if errorlevel 1 goto :error
-
 echo.
-echo Build completed and AutoExec started: "%AUTOEXEC_EXE%"
+echo Build completed: "%AUTOEXEC_EXE%"
 exit /b 0
 
 :error
