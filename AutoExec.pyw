@@ -918,6 +918,48 @@ def _get_process_cmdline(pid):
         kernel32.CloseHandle(h)
 
 
+def _snapshot_pids_by_exe():
+    """CreateToolhelp32Snapshot으로 전체 프로세스를 1회 열거해 {exe명(소문자): PID set} 반환.
+    tasklist 서브프로세스(호출당 ~0.8초)의 Win32 API 대체 (수 ms)."""
+    kernel32 = ctypes.windll.kernel32
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", ctypes.wintypes.DWORD),
+            ("cntUsage", ctypes.wintypes.DWORD),
+            ("th32ProcessID", ctypes.wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_void_p),
+            ("th32ModuleID", ctypes.wintypes.DWORD),
+            ("cntThreads", ctypes.wintypes.DWORD),
+            ("th32ParentProcessID", ctypes.wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", ctypes.wintypes.DWORD),
+            ("szExeFile", ctypes.c_wchar * 260),
+        ]
+
+    kernel32.CreateToolhelp32Snapshot.argtypes = [ctypes.wintypes.DWORD, ctypes.wintypes.DWORD]
+    kernel32.CreateToolhelp32Snapshot.restype = ctypes.wintypes.HANDLE
+    kernel32.Process32FirstW.argtypes = [ctypes.wintypes.HANDLE, ctypes.c_void_p]
+    kernel32.Process32FirstW.restype = ctypes.wintypes.BOOL
+    kernel32.Process32NextW.argtypes = [ctypes.wintypes.HANDLE, ctypes.c_void_p]
+    kernel32.Process32NextW.restype = ctypes.wintypes.BOOL
+
+    pid_map = {}
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)  # TH32CS_SNAPPROCESS
+    if not snapshot or snapshot == ctypes.c_void_p(-1).value:  # INVALID_HANDLE_VALUE
+        return pid_map
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+        ok = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while ok:
+            pid_map.setdefault(entry.szExeFile.lower(), set()).add(entry.th32ProcessID)
+            ok = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snapshot)
+    return pid_map
+
+
 def _find_window_by_exe_name(exe_name_lower):
     """exe 파일명(소문자)으로 보이는 창 핸들 반환. .py/.pyw는 커맨드라인 매칭."""
     result = [None]
@@ -4032,25 +4074,9 @@ class AutoExecApp:
         """Python 스크립트를 실행중인 프로세스 PID set 반환 (Win32 API 직접 호출)"""
         pids = set()
         try:
-            # python/pythonw 프로세스를 tasklist로 빠르게 찾기
-            result = subprocess.run(
-                ["tasklist", "/fi", "imagename eq pythonw.exe", "/fo", "csv", "/nh"],
-                capture_output=True, text=True, timeout=5,
-                creationflags=0x08000000,
-            )
-            result2 = subprocess.run(
-                ["tasklist", "/fi", "imagename eq python.exe", "/fo", "csv", "/nh"],
-                capture_output=True, text=True, timeout=5,
-                creationflags=0x08000000,
-            )
-            candidate_pids = set()
-            for line in (result.stdout + result2.stdout).splitlines():
-                parts = line.strip().strip('"').split('","')
-                if len(parts) >= 2:
-                    try:
-                        candidate_pids.add(int(parts[1]))
-                    except ValueError:
-                        pass
+            # python/pythonw 프로세스를 스냅샷으로 찾기
+            pid_map = _snapshot_pids_by_exe()
+            candidate_pids = pid_map.get("pythonw.exe", set()) | pid_map.get("python.exe", set())
             # 각 PID의 커맨드라인을 Win32 API로 확인
             for pid in candidate_pids:
                 cmdline = _get_process_cmdline(pid)
@@ -4091,22 +4117,10 @@ class AutoExecApp:
         WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
         ctypes.windll.user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
 
-        # OpenProcess 실패 대비: 프로세스 목록에서 PID를 찾아 창 매칭
+        # OpenProcess 실패 대비: 프로세스 스냅샷에서 PID를 찾아 창 매칭
         if not hwnds and not is_python_script:
             try:
-                result = subprocess.run(
-                    ["tasklist", "/fi", f"imagename eq {exe_name_lower}", "/fo", "csv", "/nh"],
-                    capture_output=True, text=True, timeout=5,
-                    creationflags=0x08000000,
-                )
-                fallback_pids = set()
-                for line in result.stdout.splitlines():
-                    parts = line.strip().strip('"').split('","')
-                    if len(parts) >= 2:
-                        try:
-                            fallback_pids.add(int(parts[1]))
-                        except ValueError:
-                            pass
+                fallback_pids = _snapshot_pids_by_exe().get(exe_name_lower, set())
                 if fallback_pids:
                     def enum_fallback(hwnd, lParam):
                         if not ctypes.windll.user32.IsWindowVisible(hwnd):
@@ -4609,33 +4623,22 @@ class AutoExecApp:
         self._process_check_counter = 0
 
         profiles = db_fetch_profiles()
-        for profile in profiles:
-            if not profile.get("enabled", 1):
-                continue
-            trigger = profile.get("trigger_mode", "monitor_change")
-            if trigger not in ("process_start", "both"):
-                continue
+        targets = [
+            p for p in profiles
+            if p.get("enabled", 1) and p.get("trigger_mode", "monitor_change") in ("process_start", "both")
+        ]
+        if not targets:
+            return
 
+        # 전체 프로세스 1회 스냅샷 — 프로파일별 tasklist 동기 호출(개당 ~0.8초)이
+        # 메인 스레드를 매 주기 수 초씩 블로킹하던 문제의 근본 수정
+        pid_map = _snapshot_pids_by_exe()
+        if not pid_map:
+            return  # 스냅샷 실패 — moved_pids 기록 유지 (실패 시 창 이동 재트리거 방지)
+        for profile in targets:
             exe_name = profile["exe_name"].lower()
             profile_id = profile["id"]
-
-            # 해당 프로세스의 현재 PID 집합 획득
-            current_pids = set()
-            try:
-                result = subprocess.run(
-                    ["tasklist", "/fi", f"imagename eq {exe_name}", "/fo", "csv", "/nh"],
-                    capture_output=True, text=True, timeout=5,
-                    creationflags=0x08000000,
-                )
-                for line in result.stdout.splitlines():
-                    parts = line.strip().strip('"').split('","')
-                    if len(parts) >= 2:
-                        try:
-                            current_pids.add(int(parts[1]))
-                        except ValueError:
-                            pass
-            except Exception:
-                continue
+            current_pids = pid_map.get(exe_name, set())
 
             if not current_pids:
                 # 프로세스 종료 시 PID 기록 초기화
