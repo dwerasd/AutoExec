@@ -42,7 +42,7 @@ temp/
 obj/
 .github/
 .specstory/
-.temp/
+docs/
 __pycache__/
 Debug/
 data/
