@@ -3108,6 +3108,8 @@ class AutoExecApp:
 
         # 관리 메뉴
         menu_backup = tk.Menu(menubar, tearoff=0)
+        menu_backup.add_command(label="마우스 커서 설치", command=self._menu_cursor_install)
+        menu_backup.add_separator()
         menu_backup.add_command(label="레지스트리 관리...", command=self._menu_registry)
         menu_backup.add_command(label="백업 경로 관리...", command=self._menu_backup_paths)
         menu_backup.add_separator()
@@ -3132,6 +3134,12 @@ class AutoExecApp:
 
     def _menu_registry(self):
         RegistryDialog(self.root, self.log)
+
+    def _menu_cursor_install(self):
+        """skinpack 커서 설치·구성표 적용 (관리자 권한 필요, 한글 이름 번역 버그 보정 포함)."""
+        def _worker():
+            win11_setup.install_cursor_scheme(self.log)
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _menu_process_audit(self, enable: bool):
         """프로세스 생성 감사(4688) 켜기/끄기 (관리자 권한 필요, 상태 확인 없이 적용)."""

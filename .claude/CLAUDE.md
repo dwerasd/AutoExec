@@ -16,6 +16,7 @@ AutoExec.db         # SQLite3 데이터베이스 (pcs, tasks, move_targets, clos
 AutoExec.json       # 로컬 UI 설정 (창 위치, 크기 등)
 .env                # 텔레그램 봇 토큰, 채팅 ID
 data/               # Git 다운로드 저장 폴더
+cursors/skinpack/   # 마우스 커서 구성표 원본 (관리 메뉴 "마우스 커서 설치"가 %SystemRoot%\Cursors\skinpack 로 복사)
 ```
 
 ## 3. Communication

@@ -300,48 +300,6 @@
             "type": "REG_DWORD",
             "value": 0,
             "description": "시스템 패널 제안 비활성화"
-        },
-        {
-            "path": "HKEY_CURRENT_USER\\Control Panel\\Cursors",
-            "name": "화살표",
-            "type": "REG_EXPAND_SZ",
-            "value": "%SYSTEMROOT%\\Cursors\\skinpack\\Arrow.cur",
-            "description": "커서 Arrow 한글이름 보정 - KB5120998(26100.9278) 한국어 win32kbase.sys.mui 가 값 이름을 번역해 조회 실패, skinpack 설치 필요"
-        },
-        {
-            "path": "HKEY_CURRENT_USER\\Control Panel\\Cursors",
-            "name": "대기",
-            "type": "REG_EXPAND_SZ",
-            "value": "%SYSTEMROOT%\\Cursors\\skinpack\\Wait.ani",
-            "description": "커서 Wait 한글이름 보정 (KB5120998 번역 버그)"
-        },
-        {
-            "path": "HKEY_CURRENT_USER\\Control Panel\\Cursors",
-            "name": "십자선",
-            "type": "REG_EXPAND_SZ",
-            "value": "%SYSTEMROOT%\\Cursors\\skinpack\\Cross.cur",
-            "description": "커서 Crosshair 한글이름 보정 (KB5120998 번역 버그)"
-        },
-        {
-            "path": "HKEY_CURRENT_USER\\Control Panel\\Cursors",
-            "name": "아니요",
-            "type": "REG_EXPAND_SZ",
-            "value": "%SYSTEMROOT%\\Cursors\\skinpack\\NO.cur",
-            "description": "커서 No 한글이름 보정 (KB5120998 번역 버그)"
-        },
-        {
-            "path": "HKEY_CURRENT_USER\\Control Panel\\Cursors",
-            "name": "손",
-            "type": "REG_EXPAND_SZ",
-            "value": "%SYSTEMROOT%\\Cursors\\skinpack\\Hand.cur",
-            "description": "커서 Hand 한글이름 보정 (KB5120998 번역 버그)"
-        },
-        {
-            "path": "HKEY_CURRENT_USER\\Control Panel\\Cursors",
-            "name": "도움말",
-            "type": "REG_EXPAND_SZ",
-            "value": "%SYSTEMROOT%\\Cursors\\skinpack\\Help.cur",
-            "description": "커서 Help 한글이름 보정 (KB5120998 번역 버그)"
         }
     ],
     "description": "백업할 레지스트리 항목 목록입니다."
