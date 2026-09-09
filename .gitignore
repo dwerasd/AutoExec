@@ -48,6 +48,7 @@ Debug/
 data/
 build/
 dist/
+_internal/
 
 # 환경 변수
 .env

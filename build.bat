@@ -30,19 +30,29 @@ echo [3/6] Installing build dependencies...
 if errorlevel 1 goto :error
 
 echo [4/6] Building AutoExec.exe...
+rem --onedir 고정: --onefile 은 실행할 때마다 %%TEMP%%\_MEIxxxxx 로 압축을 풀고
+rem 종료 시 지운다. 그 폴더의 DLL 을 아직 물고 있는 인스턴스가 있으면 삭제가
+rem 실패하고 부트로더가 "Failed to remove temporary directory" 경고 창을 띄우는데,
+rem 무인 RPA 에서는 사람이 확인을 누를 때까지 멈춘다. onedir 은 임시 폴더를 쓰지 않는다.
 "%PYTHON_EXE%" -m PyInstaller ^
     --noconfirm ^
     --clean ^
-    --onefile ^
+    --onedir ^
     --windowed ^
     --name AutoExec ^
-    --distpath "%~dp0." ^
+    --distpath "%~dp0build\dist" ^
     --workpath "%~dp0build" ^
     --specpath "%~dp0build" ^
     "%~dp0AutoExec.pyw"
 if errorlevel 1 goto :error
 
-echo [5/6] Removing stale dist build...
+echo [5/6] Deploying build output...
+rem AutoExec 은 SCRIPT_DIR(= AutoExec.exe 가 있는 폴더)에서 DB/.env/JSON 을 찾는다.
+rem 따라서 exe 는 프로젝트 루트에 두고 런타임 폴더(_internal)만 그 옆에 미러링한다.
+copy /y "%~dp0build\dist\AutoExec\AutoExec.exe" "%AUTOEXEC_EXE%" >nul
+if errorlevel 1 goto :error
+robocopy "%~dp0build\dist\AutoExec\_internal" "%~dp0_internal" /MIR /NFL /NDL /NJH /NJS /NP >nul
+if errorlevel 8 goto :error
 if exist "%~dp0dist\autoexec.exe" del /f /q "%~dp0dist\autoexec.exe"
 
 if "%WAS_RUNNING%"=="1" (
