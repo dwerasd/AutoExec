@@ -300,6 +300,13 @@
             "type": "REG_DWORD",
             "value": 0,
             "description": "시스템 패널 제안 비활성화"
+        },
+        {
+            "path": "HKEY_CURRENT_USER\\Console",
+            "name": "QuickEdit",
+            "type": "REG_DWORD",
+            "value": 1,
+            "description": "cmd 콘솔 빠른 편집 모드 활성화 (우클릭 = 붙여넣기)"
         }
     ],
     "description": "백업할 레지스트리 항목 목록입니다."
